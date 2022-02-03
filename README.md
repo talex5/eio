@@ -442,19 +442,36 @@ let main ~net ~addr =
 ## Design Note: Object Capabilities
 
 The `Eio` high-level API follows the principles of the [Object-capability model][] (Ocaps).
-In this model, having a reference to an "object" (which could be a function or closure) grants permission to use it.
-The only ways to get a reference are to create a new object, or to be passed an existing reference by another object.
-For A to pass a reference B to another object C, A requires access (i.e. references) to both B and C.
-In particular, for B to get a reference to C, there must be a path in the reference graph between them
-on which all objects allow it.
+Despite the name, this has little to do with object-oriented programming,
+and could just as easily have been called Lambda Capabilities.
+The key idea is to notice that the lambda calculus has a built-in security system:
+a function can only access things that are in its scope.
 
-This is all just standard programming practice, really, except that it disallows patterns that break this model:
+For example, consider this program:
 
-- Global variables are not permitted. Otherwise, B could store itself in a global variable and C could collect it.
-- Modules that use C code or the OS to provide the effect of globals are also not permitted.
+```ocaml
+let foo x = ... in
+let bar () = ... in
+let data = ref 0 in
+foo data + bar ()
+```
 
-For example, OCaml's `Unix` module provides access to the network and filesystem to any code that wants it.
-By contrast, an Eio module that wants such access must receive it explicitly.
+We can immediately see that `foo` can access `data`, but `bar` can't.
+By calling `foo data`, we granted `foo` access it.
+
+Surprisingly, this simple system turns out to have many desirable properties.
+However, most languages (including OCaml) have features that spoil things:
+
+1. If the language adds global variables, `foo` can store `data` in a global and `bar` can get it from there.
+
+2. If the standard library allows all code to e.g. access the file-system, this can be used like a global variable too.
+   For example, OCaml's `Unix` module provides access to the network and filesystem to any code that wants it.
+   By contrast, an Eio module that wants such access must receive it explicitly.
+
+3. Library APIs may not support fine-grained access controls.
+   For example, a Directory abstraction should only give access to that sub-tree of the file-system.
+   It would be tempting to add a `get_parent : directory -> directory` function,
+   but doing this gives any code with access to one directory access to everything.
 
 Consider the network example in the previous section.
 Imagine this is a large program and we want to know:
@@ -462,24 +479,24 @@ Imagine this is a large program and we want to know:
 1. Does this program modify the filesystem?
 2. Does this program send telemetry data over the network?
 
-In an Ocap language, we don't have to read the entire code-base to find the answers:
+In an capability-safe language, we don't have to read the entire code-base to find the answers:
 
-- All authority starts at the (privileged) `run` function with the `env` parameter,
+- All authority starts at the (privileged) `Eio_main.run` function with the `env` parameter,
   so we must check this code.
 - Only `env`'s network access is used, so we know this program doesn't access the filesystem,
   answering question 1 immediately.
-- To check whether telemetry is sent, we need to follow the `network` authority as it is passed to `main`.
-- `main` uses `network` to open a listening socket on the loopback interface, which it passes to `run_server`.
-  `run_server` does not get the full `network` access, so we probably don't need to read that code; however,
+- To check whether telemetry is sent, we need to follow the `net` authority as it is passed to `main`.
+- `main` uses `net` to open a listening socket on the loopback interface, which it passes to `run_server`.
+  `run_server` does not get the full `net` access, so we probably don't need to read that code; however,
   we might want to check whether we granted other parties access to this port on our loopback network.
-- `run_client` does get `network`, so we do need to read that.
-  We could make that code easier to audit by passing it `(fun () -> Eio.Net.connect network addr)` instead of `network`.
+- `run_client` does get `net`, so we do need to read that.
+  We could make that code easier to audit by passing it `(fun () -> Eio.Net.connect net addr)` instead of `net`.
   Then we could see that `run_client` could only connect to our loopback address.
 
-Since OCaml is not an Ocap language, code can ignore Eio and use the non-Ocap APIs directly.
-Therefore, this cannot be used as a security mechanism.
+Since OCaml is not a capability-safe language, code can ignore Eio and use the old APIs directly.
+Therefore, this cannot be used to reason about malicious code.
 However, it still makes non-malicious code easier to understand and test
-and may allow for an Ocap extension to the language in the future.
+and may allow for an extension to the language in the future.
 See [Emily][] for a previous attempt at this.
 
 ## Buffering and Parsing
