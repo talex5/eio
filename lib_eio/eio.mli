@@ -945,6 +945,8 @@ module Buf_read : sig
       Use {!at_end_of_input} to be sure. *)
 end
 
+module Buf_write = Buf_write
+
 (** Networking. *)
 module Net : sig
   (** Example:
