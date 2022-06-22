@@ -7,6 +7,7 @@ module Private = struct
     type 'a enqueue = 'a Suspend.enqueue
     type _ Effect.t += 
       | Suspend = Suspend.Suspend
+      | Suspend_fast = Suspend.Suspend_fast
       | Fork = Fiber.Fork
       | Get_context = Cancel.Get_context
       | Trace : (?__POS__:(string * int * int * int) -> ('a, Format.formatter, unit, unit) format4 -> 'a) Effect.t

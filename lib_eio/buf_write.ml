@@ -139,7 +139,7 @@ type t =
   ; mutable bytes_written  : int
   ; mutable closed         : bool
   ; mutable yield          : bool
-  ; mutable wake_writer    : (unit, exn) result -> unit
+  ; mutable wake_writer    : unit -> unit
   ; id                     : Ctf.id
   }
 
@@ -223,7 +223,7 @@ let write_gen t ~length ~blit ?(off=0) ?len a =
   let wake = t.wake_writer in
   if wake != ignore then (
     t.wake_writer <- ignore;
-    wake (Ok ())
+    wake ();
   )
 
 let write_string =
@@ -407,7 +407,7 @@ let rec read_into t buf =
     Fiber.yield ();
     read_into t buf
   end else if nothing_to_do then begin
-    Suspend.enter_unchecked (fun _ctx enqueue -> t.wake_writer <- enqueue);
+    Suspend.fast (fun resume -> t.wake_writer <- resume);
     read_into t buf
   end else begin
     let iovecs = Buffers.map_to_list t.scheduled ~f:(fun x -> x) in
@@ -429,7 +429,7 @@ let rec read_source_buffer t fn =
     Fiber.yield ();
     read_source_buffer t fn
   end else if nothing_to_do then begin
-    Suspend.enter_unchecked (fun _ctx enqueue -> t.wake_writer <- enqueue);
+    Suspend.fast (fun resume -> t.wake_writer <- resume);
     read_source_buffer t fn
   end else begin
     let iovecs = Buffers.map_to_list t.scheduled ~f:(fun x -> x) in

@@ -1257,6 +1257,11 @@ let rec run ?(queue_depth=64) ?n_blocks ?(block_size=4096) ?polling_timeout ?fal
                 );
               schedule st
             )
+          | Eio.Private.Effects.Suspend_fast f -> Some (fun k ->
+              let k = { Suspended.k; fiber } in
+              f (enqueue_at_head st k);
+              schedule st
+            )
           | Eio.Private.Effects.Fork (new_fiber, f) -> Some (fun k ->
               let k = { Suspended.k; fiber } in
               enqueue_at_head st k ();

@@ -1737,6 +1737,8 @@ module Private : sig
           passing it the suspended fiber's context and a function to resume it.
           [fn] should arrange for [enqueue] to be called once the thread is ready to run again. *)
 
+      | Suspend_fast : ((unit -> unit) -> unit) -> unit Effect.t
+
       | Fork : Fiber_context.t * (unit -> unit) -> unit Effect.t
       (** [perform (Fork new_context f)] creates a new fiber and runs [f] in it, with context [new_context].
           [f] must not raise an exception. See {!Fiber.fork}. *)
