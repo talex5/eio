@@ -139,6 +139,8 @@ type t =
   ; mutable bytes_written  : int
   ; mutable closed         : bool
   ; mutable yield          : bool
+  ; writer_thread          : unit Waiters.t
+  ; id                     : Ctf.id
   }
 
 type operation = [
@@ -156,7 +158,10 @@ let of_bigstring buffer =
   ; bytes_received  = 0
   ; bytes_written   = 0
   ; closed          = false
-  ; yield           = false }
+  ; yield           = false
+  ; writer_thread   = Waiters.create ()
+  ; id              = Ctf.mint_id ()
+  }
 
 let create size =
   of_bigstring (Bigstringaf.create size)
@@ -399,6 +404,29 @@ let operation t =
     let iovecs = Buffers.map_to_list t.scheduled ~f:(fun x -> x) in
     `Writev iovecs
   end
+
+let as_flow t =
+  object
+    inherit Flow.source
+
+    method read_into buf =
+      let rec aux () =
+        match operation t with
+        | `Yield -> Fiber.yield (); aux ()
+        | `Close -> raise End_of_file
+        | `Writev iovecs ->
+          let n, _iovecs = Cstruct.fillv ~src:iovecs ~dst:buf in
+          shift t n;
+          n
+      in
+      aux ()
+  end
+
+let with_flow ?(initial_size=1024) flow fn =
+  let t = create initial_size in
+  Switch.run @@ fun sw ->
+  Fiber.fork ~sw (fun () -> Flow.copy (as_flow t) flow);
+  Fun.protect ~finally:(fun () -> close t) (fun () -> fn t)
 
 let rec serialize t writev =
   match operation t with
