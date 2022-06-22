@@ -441,7 +441,7 @@ let rec read_source_buffer t fn =
 let as_flow t =
   object
     inherit Flow.source
-    method! read_methods = [Flow.Read_source_buffer (read_source_buffer t)]
+    (*     method! read_methods = [Flow.Read_source_buffer (read_source_buffer t)] *)
     method read_into = read_into t
   end
 
