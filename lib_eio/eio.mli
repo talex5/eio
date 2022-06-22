@@ -1149,72 +1149,16 @@ module Buf_write : sig
       callbacks registered with [t] within this span of the write queue will be
       called. *)
 
-  val drain : t -> int
+  (*   val drain : t -> int *)
   (** [drain t] removes all pending writes from [t], returning the number of
       bytes that were enqueued to be written and freeing any scheduled
       buffers in the process. *)
 
 
-  (** {2 Running}
-
-      Low-level operations for runing a serializer. For production use-cases,
-      consider the Async and Lwt support that this library includes before
-      attempting to use this these operations directly.  *)
-
-  type operation = [
-    | `Writev of Cstruct.t list
-    | `Yield
-    | `Close ]
-  (** The type of operations that the serialier may wish to perform.
-      {ul
-
-      {li [`Writev iovecs]: Write the bytes in {!iovecs}s reporting the actual
-      number of bytes written by calling {!shift}. You must accurately report the
-      number of bytes written. Failure to do so will result in the same bytes being
-      surfaced in a [`Writev] operation multiple times.}
-
-      {li [`Yield]: Yield to other threads of control, waiting for additional
-      output before procedding. The method for achieving this is
-      application-specific, but once complete, the caller can proceed with
-      serialization by simply making another call to {!val:operation} or
-      {!serialize}.}
-
-      {li [`Close]: Serialization is complete. No further output will generated.
-      The action to take as a result, if any, is application-specific.}} *)
-
-
-  val operation : t -> operation
-  (** [operation t] is the next operation that the caller must perform on behalf
-      of the serializer [t]. Users should consider using {!serialize} before this
-      function. See the documentation for the {!type:operation} type for details
-      on how callers should handle these operations. *)
+  (** {2 Running} *)
 
   val with_flow : ?initial_size:int -> #Flow.sink -> (t -> 'a) -> 'a
   (** [with_flow flow fn] runs [fn writer], where [writer] is a buffer that flushes to [flow]. *)
-
-  val serialize : t -> (Cstruct.t list -> [`Ok of int | `Closed]) -> [`Yield | `Close]
-  (** [serialize t writev] sufaces the next operation of [t] to the caller,
-      handling a [`Writev] operation with [writev] function and performing an
-      additional bookkeeping on the caller's behalf. In the event that [writev]
-      indicates a partial write, {!serialize} will call {!yield} on the
-      serializer rather than attempting successive [writev] calls. *)
-
-
-  (** {2 Convenience Functions}
-
-      These functions are included for testing, debugging, and general
-      development. They are not the suggested way of driving a serializer in a
-      production setting. *)
-
-  val serialize_to_string : t -> string
-  (** [serialize_to_string t] runs [t], collecting the output into a string and
-      returning it. [serialzie_to_string t] immediately closes [t] and ignores
-      any calls to {!yield} on [t]. *)
-
-  val serialize_to_bigstring : t -> bigstring
-  (** [serialize_to_string t] runs [t], collecting the output into a bigstring
-      and returning it. [serialzie_to_bigstring t] immediately closes [t] and
-      ignores any calls to {!yield} on [t]. *)
 end
 
 (** Networking. *)

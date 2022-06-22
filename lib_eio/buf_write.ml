@@ -389,37 +389,29 @@ let shift t written =
   t.bytes_written <- t.bytes_written + written;
   shift_flushes t
 
-let operation t =
+let rec read_into t buf =
   if t.closed then begin
     t.yield <- false
   end;
   flush_buffer t;
   let nothing_to_do = not (has_pending_output t) in
   if t.closed && nothing_to_do then
-    `Close
+    raise End_of_file
   else if t.yield || nothing_to_do then begin
     t.yield <- false;
-    `Yield
+    Fiber.yield ();
+    read_into t buf
   end else begin
     let iovecs = Buffers.map_to_list t.scheduled ~f:(fun x -> x) in
-    `Writev iovecs
+    let n, _iovecs = Cstruct.fillv ~src:iovecs ~dst:buf in
+    shift t n;
+    n
   end
 
 let as_flow t =
   object
     inherit Flow.source
-
-    method read_into buf =
-      let rec aux () =
-        match operation t with
-        | `Yield -> Fiber.yield (); aux ()
-        | `Close -> raise End_of_file
-        | `Writev iovecs ->
-          let n, _iovecs = Cstruct.fillv ~src:iovecs ~dst:buf in
-          shift t n;
-          n
-      in
-      aux ()
+    method read_into = read_into t
   end
 
 let with_flow ?(initial_size=1024) flow fn =
@@ -427,61 +419,3 @@ let with_flow ?(initial_size=1024) flow fn =
   Switch.run @@ fun sw ->
   Fiber.fork ~sw (fun () -> Flow.copy (as_flow t) flow);
   Fun.protect ~finally:(fun () -> close t) (fun () -> fn t)
-
-let rec serialize t writev =
-  match operation t with
-  | `Writev iovecs ->
-    begin match writev iovecs with
-    | `Ok   n -> shift t n; if not (Buffers.is_empty t.scheduled) then yield t
-    | `Closed -> close t
-    end;
-    serialize t writev
-  | (`Close|`Yield) as next -> next
-
-let serialize_to_string t =
-  close t;
-  match operation t with
-  | `Writev iovecs ->
-    let len = Cstruct.lenv iovecs in
-    let bytes = Bytes.create len in
-    let pos = ref 0 in
-    List.iter (function
-      | { Cstruct.buffer; off; len } ->
-        Bigstringaf.unsafe_blit_to_bytes buffer ~src_off:off bytes ~dst_off:!pos ~len;
-        pos := !pos + len)
-    iovecs;
-    shift t len;
-    assert (operation t = `Close);
-    Bytes.unsafe_to_string bytes
-  | `Close -> ""
-  | `Yield -> assert false
-
-let serialize_to_bigstring t =
-  close t;
-  match operation t with
-  | `Writev iovecs ->
-    let len = Cstruct.lenv iovecs in
-    let bs = Bigstringaf.create len in
-    let pos = ref 0 in
-    List.iter (function
-      | { Cstruct.buffer; off; len } ->
-        Bigstringaf.unsafe_blit buffer ~src_off:off bs ~dst_off:!pos ~len;
-        pos := !pos + len)
-    iovecs;
-    shift t len;
-    assert (operation t = `Close);
-    bs
-  | `Close -> Bigstringaf.create 0
-  | `Yield -> assert false
-
-let drain =
-  let rec loop t acc =
-    match operation t with
-    | `Writev iovecs ->
-      let len = Cstruct.lenv iovecs in
-      shift t len;
-      loop t (len + acc)
-    | `Close         -> acc
-    | `Yield         -> loop t acc
-  in
-  fun t -> loop t 0
