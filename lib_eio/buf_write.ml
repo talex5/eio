@@ -139,7 +139,7 @@ type t =
   ; mutable bytes_written  : int
   ; mutable closed         : bool
   ; mutable yield          : bool
-  ; writer_thread          : unit Waiters.t
+  ; mutable wake_writer    : (unit, exn) result -> unit
   ; id                     : Ctf.id
   }
 
@@ -159,7 +159,7 @@ let of_bigstring buffer =
   ; bytes_written   = 0
   ; closed          = false
   ; yield           = false
-  ; writer_thread   = Waiters.create ()
+  ; wake_writer     = ignore
   ; id              = Ctf.mint_id ()
   }
 
@@ -219,7 +219,12 @@ let write_gen t ~length ~blit ?(off=0) ?len a =
   in
   ensure_space t len;
   blit a ~src_off:off t.buffer ~dst_off:t.write_pos ~len;
-  t.write_pos <- t.write_pos + len
+  t.write_pos <- t.write_pos + len;
+  let wake = t.wake_writer in
+  if wake != ignore then (
+    t.wake_writer <- ignore;
+    wake (Ok ())
+  )
 
 let write_string =
   let length   = String.length in
@@ -397,9 +402,12 @@ let rec read_into t buf =
   let nothing_to_do = not (has_pending_output t) in
   if t.closed && nothing_to_do then
     raise End_of_file
-  else if t.yield || nothing_to_do then begin
+  else if t.yield then begin
     t.yield <- false;
     Fiber.yield ();
+    read_into t buf
+  end else if nothing_to_do then begin
+    Suspend.enter_unchecked (fun _ctx enqueue -> t.wake_writer <- enqueue);
     read_into t buf
   end else begin
     let iovecs = Buffers.map_to_list t.scheduled ~f:(fun x -> x) in
@@ -408,13 +416,36 @@ let rec read_into t buf =
     n
   end
 
+let rec read_source_buffer t fn =
+  if t.closed then begin
+    t.yield <- false
+  end;
+  flush_buffer t;
+  let nothing_to_do = not (has_pending_output t) in
+  if t.closed && nothing_to_do then
+    raise End_of_file
+  else if t.yield then begin
+    t.yield <- false;
+    Fiber.yield ();
+    read_source_buffer t fn
+  end else if nothing_to_do then begin
+    Suspend.enter_unchecked (fun _ctx enqueue -> t.wake_writer <- enqueue);
+    read_source_buffer t fn
+  end else begin
+    let iovecs = Buffers.map_to_list t.scheduled ~f:(fun x -> x) in
+    fn iovecs;
+    let n = Cstruct.lenv iovecs in
+    shift t n
+  end
+
 let as_flow t =
   object
     inherit Flow.source
+    method! read_methods = [Flow.Read_source_buffer (read_source_buffer t)]
     method read_into = read_into t
   end
 
-let with_flow ?(initial_size=1024) flow fn =
+let with_flow ?(initial_size=0x1000) flow fn =
   let t = create initial_size in
   Switch.run @@ fun sw ->
   Fiber.fork ~sw (fun () -> Flow.copy (as_flow t) flow);
