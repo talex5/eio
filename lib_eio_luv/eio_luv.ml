@@ -81,7 +81,8 @@ type runnable =
   | IO
   | Thread of (unit -> unit)
 
-type 'a fd_event_waiters = {
+type fd_event_waiters = {
+  fd : Unix.file_descr;
   handle : Luv.Poll.t;
   read : unit Suspended.t Lwt_dllist.t;
   write : unit Suspended.t Lwt_dllist.t;
@@ -93,7 +94,7 @@ type t = {
   loop : Luv.Loop.t;
   async : Luv.Async.t;                          (* Will process [run_q] when prodded. *)
   run_q : runnable Lf_queue.t;
-  mutable fd_map : ((unit, exn) result fd_event_waiters) Fd_map.t;   (* Used for mapping readable/writable poll handles *)
+  mutable fd_map : fd_event_waiters Fd_map.t;   (* Used for mapping readable/writable poll handles *)
 }
 
 type _ Effect.t += Await : (Luv.Loop.t -> Eio.Private.Fiber_context.t -> ('a -> unit) -> unit) -> 'a Effect.t
@@ -388,103 +389,75 @@ module Low_level = struct
        Whenever we receive an event we signal to the waiters, and if there are no more read or write
        waiters then it will be safe to close the file descriptor and remove the mapping. *)
 
-    let safe_to_stop_polling events =
-      Lwt_dllist.is_empty events.read &&
-      Lwt_dllist.is_empty events.write
+    let maybe_stop t events =
+      if Lwt_dllist.is_empty events.read &&
+         Lwt_dllist.is_empty events.write then (
+        Luv.Poll.stop events.handle |> or_raise;
+        t.fd_map <- Fd_map.remove events.fd t.fd_map
+      )
 
     let apply_all q fn =
-      if Lwt_dllist.is_empty q then ()
-      else
       let rec loop = function
         | None -> ()
         | Some v -> fn v; loop (Lwt_dllist.take_opt_r q)
-    in
+      in
       loop (Lwt_dllist.take_opt_r q)
 
     let enqueue_and_remove t fn (k : unit Suspended.t) v =
       if Fiber_context.clear_cancel_fn k.fiber then
-      fn t k v
+        fn t k v
 
-    let poll_callback t events fd r =
+    let poll_callback t events r =
       begin match r with
-      | Ok (es : Luv.Poll.Event.t list) ->
-        if List.mem `READABLE es then apply_all events.read (fun k -> enqueue_and_remove t enqueue_thread k ());
-        if List.mem `WRITABLE es then apply_all events.write (fun k -> enqueue_and_remove t enqueue_thread k ());
-      | Error e ->
-        apply_all events.read (fun k -> enqueue_and_remove t enqueue_failed_thread k (Luv_error e));
-        apply_all events.write (fun k -> enqueue_and_remove t enqueue_failed_thread k (Luv_error e))
+        | Ok (es : Luv.Poll.Event.t list) ->
+          if List.mem `READABLE es then apply_all events.read (fun k -> enqueue_and_remove t enqueue_thread k ());
+          if List.mem `WRITABLE es then apply_all events.write (fun k -> enqueue_and_remove t enqueue_thread k ());
+        | Error e ->
+          apply_all events.read (fun k -> enqueue_and_remove t enqueue_failed_thread k (Luv_error e));
+          apply_all events.write (fun k -> enqueue_and_remove t enqueue_failed_thread k (Luv_error e))
       end;
-      if safe_to_stop_polling events then begin
-        Luv.Poll.stop events.handle |> or_raise;
-        t.fd_map <- Fd_map.remove fd t.fd_map
-      end
+      maybe_stop t events
 
-    (* Sets the fiber cancel function which first removes the continutation
-       from the list to continue when the FD becomes readable or writeable.
-       Then it checks if the poll handle can be stopped and the mapping
-       removed. *)
-    let set_fiber_cancel ~t ~events ~node (k:unit Suspended.t) fd =
+    let get_events t fd =
+      match Fd_map.find_opt fd t.fd_map with
+      | Some events -> events
+      | None ->
+        let handle = Luv.Poll.init ~loop:t.loop (Obj.magic fd) |> or_raise in
+        let events = {
+          fd;
+          handle;
+          read = Lwt_dllist.create ();
+          write = Lwt_dllist.create ();
+        } in
+        t.fd_map <- Fd_map.add fd events t.fd_map;
+        events
+
+    let mask events =
+      let m = if Lwt_dllist.is_empty events.write then [] else [`WRITABLE] in
+      if Lwt_dllist.is_empty events.read then m else `READABLE :: m
+
+    let await t (k:unit Suspended.t) events queue =
+      let was_empty = Lwt_dllist.is_empty queue in
+      let node = Lwt_dllist.add_l k queue in
+      (* Set the fiber cancel function, which first removes the continutation
+         from the list to continue when the FD becomes readable or writeable.
+         Then it checks if the poll handle can be stopped and the mapping
+         removed. *)
       Fiber_context.set_cancel_fn k.fiber (fun ex ->
-        Lwt_dllist.remove node;
-        if safe_to_stop_polling events then begin
-          Luv.Poll.stop events.handle |> or_raise;
-          t.fd_map <- Fd_map.remove fd t.fd_map
-        end;
-        enqueue_failed_thread t k ex
-      )
+          Lwt_dllist.remove node;
+          maybe_stop t events;
+          enqueue_failed_thread t k ex
+        );
+      if was_empty then
+        Luv.Poll.start events.handle (mask events) (poll_callback t events)
 
-    let await_readable t (k:unit Suspended.t) fd =
-      match Fd_map.find_opt fd t.fd_map with
-      | Some ({ read; _ } as events) when not (Lwt_dllist.is_empty read) ->
-        let node = Lwt_dllist.add_l k read in
-        set_fiber_cancel ~t ~events ~node k fd
-      | v ->
-        (* Either we haven't created a handle yet, or [read] is empty which either
-           means all awaiting continuations have finished or we haven't yet started
-           the [`READABLE] callback. This can happen if [await_writable] was called
-           first. *)
-        let events, mask = match v with
-          | None ->
-            let handle = Luv.Poll.init ~loop:t.loop (Obj.magic fd) |> or_raise in
-            {
-              handle;
-              read = Lwt_dllist.create ();
-              write = Lwt_dllist.create ();
-            },
-            [ `READABLE ]
-          | Some e ->
-            e, [ `READABLE; `WRITABLE ]
-        in
-        t.fd_map <- Fd_map.add fd events t.fd_map;
-        let node = Lwt_dllist.add_l k events.read in
-        set_fiber_cancel ~t ~events ~node k fd;
-        Luv.Poll.start events.handle mask (poll_callback t events fd)
+    let await_readable t k fd =
+      let events = get_events t fd in
+      await t k events events.read
 
-    let await_writable t (k:unit Suspended.t) fd =
-      match Fd_map.find_opt fd t.fd_map with
-      | Some ({ write; _ } as events) when not (Lwt_dllist.is_empty write) ->
-        let node = Lwt_dllist.add_l k write in
-        set_fiber_cancel ~t ~events ~node k fd
-      | v ->
-        (* Either we haven't created a handle yet, or [write] is empty which either
-           means all awaiting continuations have finished or we haven't yet started
-           the [`WRITABLE] callback. This can happen if [await_readable] was called
-           first. *)
-        let events, mask = match v with
-          | None ->
-            let handle = Luv.Poll.init ~loop:t.loop (Obj.magic fd) |> or_raise in
-            {
-              handle;
-              read = Lwt_dllist.create ();
-              write = Lwt_dllist.create ();
-            },
-            [ `WRITABLE ]
-          | Some e -> e, [ `READABLE; `WRITABLE ]
-        in
-        t.fd_map <- Fd_map.add fd events t.fd_map;
-        let node = Lwt_dllist.add_l k events.write in
-        set_fiber_cancel ~t ~events ~node k fd;
-        Luv.Poll.start events.handle mask (poll_callback t events fd)
+    let await_writable t k fd =
+      let events = get_events t fd in
+      await t k events events.write
   end
 
   let sleep_until due =
@@ -665,13 +638,13 @@ module Udp = struct
             enqueue_failed_thread t k ex
           );
         Luv.UDP.recv_start (Handle.get "recv_start" sock) ~allocate:(fun _ -> buf) (function
-          | Ok (_, None, _) -> ()
-          | Ok (buf, Some addr, flags) ->
-            Luv.UDP.recv_stop (Handle.get "recv_stop" sock) |> or_raise;
-            if Fiber_context.clear_cancel_fn k.fiber then enqueue_thread t k (Ok (buf, addr, flags))
-          | Error _ as err ->
-            Luv.UDP.recv_stop (Handle.get "recv_stop" sock) |> or_raise;
-            if Fiber_context.clear_cancel_fn k.fiber then enqueue_thread t k err
+            | Ok (_, None, _) -> ()
+            | Ok (buf, Some addr, flags) ->
+              Luv.UDP.recv_stop (Handle.get "recv_stop" sock) |> or_raise;
+              if Fiber_context.clear_cancel_fn k.fiber then enqueue_thread t k (Ok (buf, addr, flags))
+            | Error _ as err ->
+              Luv.UDP.recv_stop (Handle.get "recv_stop" sock) |> or_raise;
+              if Fiber_context.clear_cancel_fn k.fiber then enqueue_thread t k err
           )
       ) in
     match r with
@@ -680,11 +653,11 @@ module Udp = struct
     | Error x -> raise (wrap_flow_error x)
 
   let send t buf = function
-  | `Udp (host, port) ->
-    let bufs = [ Cstruct.to_bigarray buf ] in
-    match await (fun _loop _fiber -> Luv.UDP.send (Handle.get "send" t) bufs (luv_addr_of_eio host port)) with
-    | Ok () -> ()
-    | Error e -> raise (wrap_flow_error e)
+    | `Udp (host, port) ->
+      let bufs = [ Cstruct.to_bigarray buf ] in
+      match await (fun _loop _fiber -> Luv.UDP.send (Handle.get "send" t) bufs (luv_addr_of_eio host port)) with
+      | Ok () -> ()
+      | Error e -> raise (wrap_flow_error e)
 end
 
 let udp_socket endp = object
@@ -1005,82 +978,82 @@ let rec run : type a. (_ -> a) -> a = fun main ->
     Ctf.note_switch (Fiber_context.tid fiber);
     let open Effect.Deep in
     match_with fn ()
-    { retc = (fun () -> Fiber_context.destroy fiber);
-      exnc = (fun e -> Fiber_context.destroy fiber; raise e);
-      effc = fun (type a) (e : a Effect.t) ->
-        match e with
-        | Await fn ->
-          Some (fun k ->
-            let k = { Suspended.k; fiber } in
-            fn loop fiber (enqueue_thread st k))
-        | Eio.Private.Effects.Fork (new_fiber, f) ->
-          Some (fun k ->
-              let k = { Suspended.k; fiber } in
-              enqueue_at_head st k ();
-              fork ~new_fiber f
+      { retc = (fun () -> Fiber_context.destroy fiber);
+        exnc = (fun e -> Fiber_context.destroy fiber; raise e);
+        effc = fun (type a) (e : a Effect.t) ->
+          match e with
+          | Await fn ->
+            Some (fun k ->
+                let k = { Suspended.k; fiber } in
+                fn loop fiber (enqueue_thread st k))
+          | Eio.Private.Effects.Fork (new_fiber, f) ->
+            Some (fun k ->
+                let k = { Suspended.k; fiber } in
+                enqueue_at_head st k ();
+                fork ~new_fiber f
+              )
+          | Eio.Private.Effects.Get_context -> Some (fun k -> continue k fiber)
+          | Enter_unchecked fn -> Some (fun k ->
+              fn st { Suspended.k; fiber }
             )
-        | Eio.Private.Effects.Get_context -> Some (fun k -> continue k fiber)
-        | Enter_unchecked fn -> Some (fun k ->
-            fn st { Suspended.k; fiber }
-          )
-        | Enter fn -> Some (fun k ->
-            match Fiber_context.get_error fiber with
-            | Some e -> discontinue k e
-            | None -> fn st { Suspended.k; fiber }
-          )
-        | Eio.Private.Effects.Suspend fn ->
-          Some (fun k ->
-              let k = { Suspended.k; fiber } in
-              fn fiber (enqueue_result_thread st k)
+          | Enter fn -> Some (fun k ->
+              match Fiber_context.get_error fiber with
+              | Some e -> discontinue k e
+              | None -> fn st { Suspended.k; fiber }
             )
-        | Eio_unix.Private.Await_readable fd -> Some (fun k ->
-            match Fiber_context.get_error fiber with
-            | Some e -> discontinue k e
-            | None ->
-              let k = { Suspended.k; fiber } in
-              Poll.await_readable st k fd
-          )
-        | Eio_unix.Private.Await_writable fd -> Some (fun k ->
-            match Fiber_context.get_error fiber with
-            | Some e -> discontinue k e
-            | None ->
-              let k = { Suspended.k; fiber } in
-              Poll.await_writable st k fd
-          )
-        | Eio_unix.Private.Get_system_clock -> Some (fun k -> continue k clock)
-        | Eio_unix.Private.Socket_of_fd (sw, close_unix, fd) -> Some (fun k ->
-            try
-              let fd = Low_level.Stream.of_unix fd in
-              let sock = Luv.TCP.init ~loop () |> or_raise in
-              let handle = Handle.of_luv ~sw ~close_unix sock in
-              Luv.TCP.open_ sock fd |> or_raise;
-              continue k (socket handle :> Eio_unix.socket)
-            with Luv_error _ as ex ->
-              discontinue k ex
-          )
-        | Eio_unix.Private.Socketpair (sw, domain, ty, protocol) -> Some (fun k ->
-            try
-              if domain <> Unix.PF_UNIX then failwith "Only PF_UNIX sockets are supported by libuv";
-              let ty =
-                match ty with
-                | Unix.SOCK_DGRAM -> `DGRAM
-                | Unix.SOCK_STREAM -> `STREAM
-                | Unix.SOCK_RAW -> `RAW
-                | Unix.SOCK_SEQPACKET -> failwith "Type SEQPACKET not support by libuv"
-              in
-              let a, b = Luv.TCP.socketpair ty protocol |> or_raise in
-              let wrap x =
+          | Eio.Private.Effects.Suspend fn ->
+            Some (fun k ->
+                let k = { Suspended.k; fiber } in
+                fn fiber (enqueue_result_thread st k)
+              )
+          | Eio_unix.Private.Await_readable fd -> Some (fun k ->
+              match Fiber_context.get_error fiber with
+              | Some e -> discontinue k e
+              | None ->
+                let k = { Suspended.k; fiber } in
+                Poll.await_readable st k fd
+            )
+          | Eio_unix.Private.Await_writable fd -> Some (fun k ->
+              match Fiber_context.get_error fiber with
+              | Some e -> discontinue k e
+              | None ->
+                let k = { Suspended.k; fiber } in
+                Poll.await_writable st k fd
+            )
+          | Eio_unix.Private.Get_system_clock -> Some (fun k -> continue k clock)
+          | Eio_unix.Private.Socket_of_fd (sw, close_unix, fd) -> Some (fun k ->
+              try
+                let fd = Low_level.Stream.of_unix fd in
                 let sock = Luv.TCP.init ~loop () |> or_raise in
-                Luv.TCP.open_ sock x |> or_raise;
-                let h = Handle.of_luv ~sw ~close_unix:true sock in
-                (socket h :> Eio_unix.socket)
-              in
-              continue k (wrap a, wrap b)
-            with Luv_error _ as ex ->
-              discontinue k ex
-          )
-        | _ -> None
-    }
+                let handle = Handle.of_luv ~sw ~close_unix sock in
+                Luv.TCP.open_ sock fd |> or_raise;
+                continue k (socket handle :> Eio_unix.socket)
+              with Luv_error _ as ex ->
+                discontinue k ex
+            )
+          | Eio_unix.Private.Socketpair (sw, domain, ty, protocol) -> Some (fun k ->
+              try
+                if domain <> Unix.PF_UNIX then failwith "Only PF_UNIX sockets are supported by libuv";
+                let ty =
+                  match ty with
+                  | Unix.SOCK_DGRAM -> `DGRAM
+                  | Unix.SOCK_STREAM -> `STREAM
+                  | Unix.SOCK_RAW -> `RAW
+                  | Unix.SOCK_SEQPACKET -> failwith "Type SEQPACKET not support by libuv"
+                in
+                let a, b = Luv.TCP.socketpair ty protocol |> or_raise in
+                let wrap x =
+                  let sock = Luv.TCP.init ~loop () |> or_raise in
+                  Luv.TCP.open_ sock x |> or_raise;
+                  let h = Handle.of_luv ~sw ~close_unix:true sock in
+                  (socket h :> Eio_unix.socket)
+                in
+                continue k (wrap a, wrap b)
+              with Luv_error _ as ex ->
+                discontinue k ex
+            )
+          | _ -> None
+      }
   in
   let main_status = ref `Running in
   let new_fiber = Fiber_context.make_root () in
