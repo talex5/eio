@@ -92,3 +92,34 @@ let listening_socket label =
 let on_accept (l:listening_socket) actions =
   let as_accept_pair x = (x :> Flow.t * Eio.Net.Sockaddr.stream) in
   Handler.seq l#on_accept (List.map (Action.map as_accept_pair) actions)
+
+type datagram_socket = <
+  Eio.Net.datagram_socket;
+  close : unit;
+  on_recv : (Eio.Net.Sockaddr.datagram * string) Handler.t;
+>
+
+let datagram_socket ?(pp=Flow.pp_default) label =
+  let on_recv = Handler.make (`Raise (Failure "Mock on_recv handler not configured")) in
+  object (_ : datagram_socket)
+    inherit Eio.Net.datagram_socket
+    method on_recv = on_recv
+
+    method send addr data =
+      traceln "%s: send to %a @[<v>%a@]" label Eio.Net.Sockaddr.pp addr pp (Cstruct.to_string data)
+
+    method recv buf =
+      let addr, data = Handler.run on_recv in
+      let len = String.length data in
+      if Cstruct.length buf < len then
+        Fmt.failwith "%s: recv buffer too short for %a!" label pp data;
+      Cstruct.blit_from_string data 0 buf 0 len;
+      traceln "%s: recv from %a @[<v>%a@]" label Eio.Net.Sockaddr.pp addr pp data;
+      addr, len
+
+    method close = traceln "%s: closed" label
+  end
+
+let on_recv (t:datagram_socket) actions =
+  let as_recv_pair x = (x :> Eio.Net.Sockaddr.datagram * string) in
+  Handler.seq t#on_recv (List.map (Action.map as_recv_pair) actions)

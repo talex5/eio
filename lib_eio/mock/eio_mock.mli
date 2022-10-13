@@ -130,6 +130,12 @@ module Net : sig
     on_accept : (Flow.t * Eio.Net.Sockaddr.stream) Handler.t;
   >
 
+  type datagram_socket = <
+    Eio.Net.datagram_socket;
+    close : unit;
+    on_recv : (Eio.Net.Sockaddr.datagram * string) Handler.t;
+  >
+
   val make : string -> t
   (** [make label] is a new mock network. *)
 
@@ -154,6 +160,12 @@ module Net : sig
     (Flow.t * Eio.Net.Sockaddr.stream) Handler.actions ->
     unit
   (** [on_accept socket actions] configures how to respond when the server calls "accept". *)
+
+  val datagram_socket : ?pp:string Fmt.t -> string -> datagram_socket
+  (** [datagram_socket label] is a mock datagram socket. *)
+
+  val on_recv : datagram_socket -> ([< Eio.Net.Sockaddr.datagram] * string) Handler.actions -> unit
+  (** [on_recv socket actions] configures how to respond when the application reads a datagram. *)
 end
 
 (** A mock {!Eio.Time} clock for testing timeouts. *)
