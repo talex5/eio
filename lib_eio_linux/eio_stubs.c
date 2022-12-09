@@ -8,7 +8,8 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
-
+#include <sys/socket.h>
+#include <netdb.h>
 
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
@@ -16,6 +17,7 @@
 #include <caml/signals.h>
 #include <caml/unixsupport.h>
 #include <caml/bigarray.h>
+#include <caml/socketaddr.h>
 
 // Make sure we have enough space for at least one entry.
 #define DIRENT_BUF_SIZE (PATH_MAX + sizeof(struct dirent64))
@@ -98,4 +100,66 @@ CAMLprim value caml_eio_getdents(value v_fd) {
   }
 
   CAMLreturn(result);
+}
+
+CAMLprim value caml_eio_getaddrinfo(value v_node, value v_service) {
+  CAMLparam2(v_node, v_service);
+  CAMLlocal1(v_result);
+  struct addrinfo *res = NULL;
+  int r;
+  struct addrinfo hints = {
+    .ai_family = AF_UNSPEC,
+    .ai_socktype = 0,
+    .ai_protocol = 0,
+    .ai_flags = AI_ADDRCONFIG,
+  };
+
+  caml_enter_blocking_section();
+  r = getaddrinfo(String_val(v_node), String_val(v_service), NULL, &res);
+  caml_leave_blocking_section();
+  if (r == 0) {
+    struct addrinfo *item;
+    struct sockaddr_in *ip;
+    CAMLlocal4(v_list, v_cons, v_addr, v_item);
+
+    for (item = res; item; item = item->ai_next) {
+      if (item->ai_family == AF_INET || item->ai_family == AF_INET6) {
+	ip = (struct sockaddr_in*) item;
+
+	if (item->ai_socktype == SOCK_STREAM || item->ai_socktype == SOCK_DGRAM) {
+	  int tag;
+	  if (item->ai_protocol == IPPROTO_TCP) {
+	    tag = caml_hash_variant("Tcp");		// Maybe pre-generate hashes?
+	  } else if (item->ai_protocol == IPPROTO_UDP) {
+	    tag = caml_hash_variant("Udp");
+	  } else {
+	    continue;
+	  }
+
+	  v_addr = caml_unix_alloc_sockaddr((union sock_addr_union *) item->ai_addr, item->ai_addrlen, -1);
+	  v_item = caml_alloc(3, 0);	// (tcp/udp, host, port)
+	  Store_field(v_item, 0, tag);
+	  Store_field(v_item, 1, v_addr);
+	  Store_field(v_item, 2, Val_int(ip->sin_port));
+
+	  v_cons = caml_alloc(2, 0);
+	  Store_field(v_cons, 0, v_item);
+	  Store_field(v_cons, 1, v_list);
+	  v_list = v_cons;
+	}
+      }
+    }
+
+    freeaddrinfo(res);	// Should maybe do this if an allocation above fails too?
+
+    v_result = caml_alloc(1, 0);	// Ok res
+    Store_field(v_result, 0, v_list);
+    CAMLreturn(v_result);
+  } else if (r == EAI_SYSTEM) {
+    uerror("getaddrinfo", v_node);
+  } else {
+    v_result = caml_alloc(1, 1);	// Error r
+    Store_field(v_result, 0, Val_int(r));
+    CAMLreturn(v_result);
+  }
 }

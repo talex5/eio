@@ -858,8 +858,9 @@ module Low_level = struct
 
   external eio_getdents : Unix.file_descr -> string list = "caml_eio_getdents"
 
-  external eio_getaddrinfo : string -> string -> Unix.getaddrinfo_option list ->
-    (Unix.addr_info list, Eio.Net.getaddrinfo_error) result
+  type sockaddr = [ `Tcp of Eio.Net.Ipaddr.v4v6 * int
+                  | `Udp of Eio.Net.Ipaddr.v4v6 * int ]
+  external eio_getaddrinfo : string -> string -> (sockaddr list, int) result
     = "caml_eio_getaddrinfo"
 
   let getrandom { Cstruct.buffer; off; len } =
@@ -946,22 +947,10 @@ module Low_level = struct
 
   (* https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml *)
   let getaddrinfo ~service node =
-    let to_eio_sockaddr_t {Unix.ai_family; ai_addr; ai_socktype; ai_protocol; _ } =
-      match ai_family, ai_socktype, ai_addr with
-      | (Unix.PF_INET | PF_INET6),
-        (Unix.SOCK_STREAM | SOCK_DGRAM),
-        Unix.ADDR_INET (inet_addr,port) -> (
-          match ai_protocol with
-          | 6 -> Some (`Tcp (Eio_unix.Ipaddr.of_unix inet_addr, port))
-          | 17 -> Some (`Udp (Eio_unix.Ipaddr.of_unix inet_addr, port))
-          | _ -> None)
-      | _ -> None
-    in
     Eio_unix.run_in_systhread @@ fun () ->
-    (match (eio_getaddrinfo node service []) with
-     | Ok l -> l
-     | Error e -> raise (Eio.Net.Getaddrinfo_error e))
-    |> List.filter_map to_eio_sockaddr_t
+    match eio_getaddrinfo node service with
+    | Ok l -> (List.rev l :> Eio.Net.Sockaddr.t list)
+    | Error e -> Fmt.failwith "error %d" e (* raise (Eio.Net.Getaddrinfo_error e) *)
 end
 
 external eio_eventfd : int -> Unix.file_descr = "caml_eio_eventfd"
