@@ -1,0 +1,7 @@
+; We copy cells.ml here so we can build it using TracedAtomic instead of the default one.
+(rule
+  (action (copy ../cells.ml cells.ml)))
+
+(executable
+  (name test_dscheck)
+  (libraries dscheck fmt))

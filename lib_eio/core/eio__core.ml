@@ -5,6 +5,7 @@ module Cancel = Cancel
 module Exn = Exn
 module Private = struct
   module Suspend = Suspend
+  module Cells = Cells
   module Waiters = Waiters
   module Ctf = Ctf
   module Fiber_context = Cancel.Fiber_context

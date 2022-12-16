@@ -559,6 +559,8 @@ end
 module Private : sig
   module Ctf = Ctf
 
+  module Cells = Cells
+
   (** Every fiber has an associated context. *)
   module Fiber_context : sig
     type t

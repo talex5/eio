@@ -1,0 +1,206 @@
+```ocaml
+# #require "eio.cqs";;
+```
+```ocaml
+module T = Cqs.Broadcast
+let show t = Fmt.pr "%a@." T.dump t
+let fiber name x = Fmt.pr "%s: woken with %d@." name x
+```
+
+Initially we have a single segment full of empty cells.
+Both resume and suspend pointers point at the first cell:
+
+```ocaml
+# let t : int T.t = T.create ();;
+val t : int T.t = <abstr>
+# show t;;
+cqs:
+  Segment 0 (prev=None):
+    Empty (suspend) (resume)
+    Empty
+    Empty
+    Empty
+  End
+- : unit = ()
+```
+
+## Adding values
+
+Adding a value, stores it and advances the "resume" pointer:
+```ocaml
+# T.resume t 1; show t;;
+cqs:
+  Segment 0 (prev=None):
+    Value (suspend)
+    Empty (resume)
+    Empty
+    Empty
+  End
+- : unit = ()
+```
+
+Adding enough values to fill the new segment:
+```ocaml
+# T.resume t 2; T.resume t 3; T.resume t 4; show t;;
+cqs:
+  Segment 0 (prev=None):
+    Value (suspend)
+    Value
+    Value
+    Value
+  End (resume)
+- : unit = ()
+```
+
+Adding a new value allocates a new segment:
+```ocaml
+# T.resume t 5; show t;;
+cqs:
+  Segment 0 (prev=None):
+    Value (suspend)
+    Value
+    Value
+    Value
+  Segment 1 (prev=None):
+    Value
+    Empty (resume)
+    Empty
+    Empty
+  End
+- : unit = ()
+```
+Note that `prev` for the new segment is `None` here.
+The only use of `prev` is to update older segments to skip fully-cancelled ones so the resumer can avoid walking them, but since the resumer is already at segment 1 there's no benefit.
+
+## Consuming values
+
+As long as there are values queued up, suspending immediately resumes, taking that value:
+
+```ocaml
+# T.suspend t (fiber "a");;
+a: woken with 1
+- : int T.request option = None
+
+# show t;;
+cqs:
+  Segment 0 (prev=None):
+    Taken
+    Value (suspend)
+    Value
+    Value
+  Segment 1 (prev=None):
+    Value
+    Empty (resume)
+    Empty
+    Empty
+  End
+- : unit = ()
+```
+
+`suspend` returns `None` because there's nothing to cancel in this case.
+
+We can take the remaining values in the same way:
+```ocaml
+# for i = 2 to 5 do
+    assert (T.suspend t (fiber (string_of_int i)) = None)
+  done;;
+2: woken with 2
+3: woken with 3
+4: woken with 4
+5: woken with 5
+- : unit = ()
+
+# show t;;
+cqs:
+  Segment 1 (prev=None):
+    Taken
+    Empty (suspend) (resume)
+    Empty
+    Empty
+  End
+- : unit = ()
+```
+
+## Waiting for values
+
+Requesting values when there aren't any available instead adds requests to the queue:
+```ocaml
+# T.suspend t (fiber "b");;
+- : int T.request option = Some <abstr>
+
+# show t;;
+cqs:
+  Segment 1 (prev=None):
+    Taken
+    Request (resume)
+    Empty (suspend)
+    Empty
+  End
+- : unit = ()
+```
+The returned request is to allow us to cancel if desired.
+
+Filling the segment:
+```ocaml
+# let suspend name = T.suspend t (fiber name);;
+val suspend : string -> int T.request option = <fun>
+
+# let c = suspend "c"
+  and d = suspend "d";;
+val c : int T.request option = Some <abstr>
+val d : int T.request option = Some <abstr>
+
+# show t;;
+cqs:
+  Segment 1 (prev=None):
+    Taken
+    Request (resume)
+    Request
+    Request
+  End (suspend)
+- : unit = ()
+```
+
+Allocating new segments:
+```ocaml
+# let reqs = List.init 5 (fun i -> suspend (string_of_int i) |> Option.get);;
+val reqs : int T.request list = [<abstr>; <abstr>; <abstr>; <abstr>; <abstr>]
+
+# show t;;
+cqs:
+  Segment 1 (prev=None):
+    Taken
+    Request (resume)
+    Request
+    Request
+  Segment 2 (prev=XXX):
+    Request
+    Request
+    Request
+    Request
+  Segment 3 (prev=XXX):
+    Request
+    Empty (suspend)
+    Empty
+    Empty
+  End
+- : unit = ()
+```
+
+Cancelling all the cells in a segment removes the segment:
+```ocaml
+# List.iter (fun r -> assert (T.cancel r)) reqs; show t;;
+cqs:
+  Segment 1 (prev=None):
+    Taken
+    Request (resume)
+    Request
+    Request
+  Segment 3 (prev=1):
+    Cancelled
+    Empty (suspend)
+    Empty
+    Empty
+  End
+- : unit = ()
+```
