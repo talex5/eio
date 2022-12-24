@@ -5,6 +5,7 @@ module Cancel = Cancel
 module Exn = Exn
 module Private = struct
   module Suspend = Suspend
+  module type CELL = S.CELL
   module Cells = Cells
   module Waiters = Waiters
   module Ctf = Ctf
