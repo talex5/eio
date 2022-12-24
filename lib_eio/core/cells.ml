@@ -2,12 +2,17 @@ module Make(Cell : S.CELL) = struct
   let cells_per_segment = 1 lsl Cell.segment_order
   let segment_mask = cells_per_segment - 1
 
+  (* An index identifies a cell. It is a pair of the segment ID and the offset
+     within the segment, packed into a single integer so we can increment it
+     atomically. *)
   module Index : sig
     type t
     type segment_id = int
 
-    val segment : t -> segment_id
     val of_segment : segment_id -> t
+    (** [of_segment x] is the index of the first cell in segment [x]. *)
+
+    val segment : t -> segment_id
     val offset : t -> int
 
     val zero : t
@@ -30,21 +35,28 @@ module Make(Cell : S.CELL) = struct
       Atomic.fetch_and_add t_atomic (+1)
   end
 
+  (** A pair with counts for the number of cancelled cells in a segment and the
+      number of pointers to it, packed as an integer so it can be adjusted atomically. *)
   module Count : sig
     type t = private int
 
     val zero : t        (* 0 pointers *)
     val init : t        (* 2 pointers *)
+    val removed : t     (* All cancelled and no pointers *)
 
     val pointers : t -> int
     val cancelled : t -> int
 
     val incr_cancelled : t Atomic.t -> bool
+    (* Increment the count of cancelled cells. Returns [true] if all are now cancelled
+       and there are no pointers to this segment. *)
 
     val try_inc_pointers : t Atomic.t -> bool
-    val dec_pointers : t Atomic.t -> bool
+    (* Atomically increment the pointers count if the value isn't [removed].
+       Returns [true] on success, or [false] if the segment was removed first. *)
 
-    val removed : t     (* All cancelled and no pointers *)
+    val dec_pointers : t Atomic.t -> bool
+    (* Decrement the pointers count. Returns [true] if the value is now [removed]. *)
 
     val dump : t Fmt.t
   end = struct
@@ -77,21 +89,46 @@ module Make(Cell : S.CELL) = struct
       Atomic.fetch_and_add t_atomic (-1 lsl 16) = removed + (1 lsl 16)
   end
 
-  module Segment = struct
+  module Segment : sig
+    type 'a t
+
+    val id : _ t -> int
+
+    val get : 'a t -> int -> 'a Cell.t Atomic.t
+
+    val try_inc_pointers : _ t -> bool
+    (* Atomically increment the pointers count if the segment isn't removed.
+       Returns [true] on success, or [false] if the segment was removed first. *)
+
+    val dec_pointers : _ t -> unit
+    (* Decrement the pointers count, removing the segment if it is no longer
+       needed. *)
+
+    val find : 'a t -> int -> 'a t
+
+    val clear_prev : _ t -> unit
+
+    val make_init : unit -> 'a t
+
+    val validate : 'a t -> suspend:'a t -> resume:'a t -> unit
+
+    val dump_list : label:Index.t Fmt.t -> 'a t Fmt.t
+
+    val on_cancelled_cell : _ t -> unit
+  end = struct
     type 'a t = {
       id : Index.segment_id;
       count : Count.t Atomic.t;
       cells : 'a Cell.t Atomic.t array;
-      prev : 'a t option Atomic.t;
-      next : 'a t option Atomic.t;
+      prev : 'a t option Atomic.t;      (* None if first, or [prev] is no longer needed *)
+      next : 'a t option Atomic.t;      (* None if not yet created *)
     }
+
+    let id t = t.id
 
     let get t i = Array.get t.cells i
 
     let pp_id f t = Fmt.int f t.id
-
-    let dump_cell f cell =
-      Cell.dump f (Atomic.get cell)
 
     let dump_cells ~label f t =
       let idx = ref (Index.of_segment t.id) in
@@ -131,12 +168,6 @@ module Make(Cell : S.CELL) = struct
     let removed t =
       Atomic.get t.count = Count.removed
 
-    let try_inc_pointers t =
-      Count.try_inc_pointers t.count
-
-    let dec_pointers t =
-      Count.dec_pointers t.count
-
     (* Get the previous segment, if any. *)
     let rec alive_prev t =
       match Atomic.get t.prev with
@@ -171,6 +202,12 @@ module Make(Cell : S.CELL) = struct
             else ()
         )
       )
+
+    let try_inc_pointers t =
+      Count.try_inc_pointers t.count
+
+    let dec_pointers t =
+      if Count.dec_pointers t.count then remove t
 
     let on_cancelled_cell t =
       if Count.incr_cancelled t.count then remove t
@@ -210,6 +247,11 @@ module Make(Cell : S.CELL) = struct
           | Some t2 -> assert (resume.id < next.id && t == t2)
         end;
         validate next ~suspend ~resume ~seen_pointers
+
+    let validate = validate ~seen_pointers:0
+
+    let clear_prev t =
+      Atomic.set t.prev None
   end
 
   module Position : sig
@@ -244,16 +286,16 @@ module Make(Cell : S.CELL) = struct
        Returns [false] if [target] gets removed first. *)
     let rec move_forward t (target : _ Segment.t) =
       let cur = Atomic.get t.segment in
-      if cur.id >= target.id then true          (* XXX: wrapping? Use Int63? *)
+      if Segment.id cur >= Segment.id target then true          (* XXX: wrapping? Use Int63? *)
       else (
         if not (Segment.try_inc_pointers target) then false     (* target already removed *)
         else (
           if Atomic.compare_and_set t.segment cur target then (
-            if Segment.dec_pointers cur then Segment.remove cur;
+            Segment.dec_pointers cur;
             true
           ) else (
             (* Concurrent update of [t]. Undo ref-count changes and retry. *)
-            if Segment.dec_pointers target then Segment.remove target;
+            Segment.dec_pointers target;
             move_forward t target
           )
         )
@@ -269,13 +311,14 @@ module Make(Cell : S.CELL) = struct
       let i = Index.next t.idx in
       let id = Index.segment i in
       let s = find_and_move_forward t r id in
-      if clear_prev then Atomic.set s.prev None;
-      if s.id = id then (
+      if clear_prev then Segment.clear_prev s;
+      if Segment.id s = id then (
         (s, Index.offset i)
       ) else (
         (* The segment we wanted contains only cancelled cells.
            Update the index to jump over those cells. *)
-        ignore (Atomic.compare_and_set t.idx (Index.succ i) (Index.of_segment s.id) : bool);
+        let s_index = Index.of_segment (Segment.id s) in
+        ignore (Atomic.compare_and_set t.idx (Index.succ i) s_index : bool);
         next ~clear_prev t
       )
   end
@@ -299,10 +342,10 @@ module Make(Cell : S.CELL) = struct
     let suspend = Position.segment t.suspend in
     let resume = Position.segment t.resume in
     let start =
-      if suspend.id < resume.id then suspend
+      if Segment.id suspend< Segment.id resume then suspend
       else resume
     in
-    Segment.validate start ~suspend ~resume ~seen_pointers:0
+    Segment.validate start ~suspend ~resume
 
   let dump f t =
     let suspend = Position.index t.suspend in
@@ -315,6 +358,5 @@ module Make(Cell : S.CELL) = struct
       if i = suspend then Format.pp_print_string f " (suspend)";
       if i = resume then Format.pp_print_string f " (resume)";
     in
-    Format.fprintf f "@[<v2>cqs:%a@]" (Segment.dump_list ~label) (Position.segment start);
-    validate t
+    Format.fprintf f "@[<v2>cqs:%a@]" (Segment.dump_list ~label) (Position.segment start)
 end
