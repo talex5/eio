@@ -38,63 +38,80 @@ module Make(Cell : S.CELL) = struct
   (** A pair with counts for the number of cancelled cells in a segment and the
       number of pointers to it, packed as an integer so it can be adjusted atomically. *)
   module Count : sig
-    type t = private int
+    type t
 
-    val zero : t        (* 0 pointers *)
-    val init : t        (* 2 pointers *)
-    val removed : t     (* All cancelled and no pointers *)
+    val create : pointers:int -> t
+    (** [create ~pointers] is a new counter for a segment.
+        Initially there are no cancelled cells. *)
 
-    val pointers : t -> int
-    val cancelled : t -> int
+    val removed : t -> bool
+    (* [removed t] is true if a segment with this count should be removed
+       (i.e. all cells are cancelled and it has no pointers).
+       Once this returns [true], it will always return [true] in future. *)
 
-    val incr_cancelled : t Atomic.t -> bool
-    (* Increment the count of cancelled cells. Returns [true] if all are now cancelled
-       and there are no pointers to this segment. *)
+    val incr_cancelled : t -> bool
+    (* Increment the count of cancelled cells, then returns [removed t] for the new state. *)
 
-    val try_inc_pointers : t Atomic.t -> bool
-    (* Atomically increment the pointers count if the value isn't [removed].
-       Returns [true] on success, or [false] if the segment was removed first. *)
+    val try_inc_pointers : t -> bool
+    (* Atomically increment the pointers count, unless [removed t].
+       Returns [true] on success. *)
 
-    val dec_pointers : t Atomic.t -> bool
-    (* Decrement the pointers count. Returns [true] if the value is now [removed]. *)
+    val dec_pointers : t -> bool
+    (* Decrement the pointers count, then returns [removed t] for the new state. *)
+
+    val validate : expected_pointers:int -> t -> unit
+    (* [validate ~expected_pointers t] check that [t] is a valid count for a non-removed segment. *)
 
     val dump : t Fmt.t
   end = struct
-    type t = int
+    type t = int Atomic.t
 
-    let make ~pointers ~cancelled = (pointers lsl 16) lor cancelled
-    let zero = make ~pointers:0 ~cancelled:0
-    let init = make ~pointers:2 ~cancelled:0
+    let v ~pointers ~cancelled = (pointers lsl 16) lor cancelled
+    let v_removed = v ~pointers:0 ~cancelled:cells_per_segment
+    let pointers v = v lsr 16
+    let cancelled v = v land 0xffff
 
-    let pointers t = t lsr 16
-    let cancelled t = t land 0xffff
+    let create ~pointers = Atomic.make (v ~pointers ~cancelled:0)
 
     let dump f t =
-      Fmt.pf f "pointers=%d, cancelled=%d" (pointers t) (cancelled t)
+      let v = Atomic.get t in
+      Fmt.pf f "pointers=%d, cancelled=%d" (pointers v) (cancelled v)
 
-    let removed = make ~pointers:0 ~cancelled:cells_per_segment
+    let incr_cancelled t =
+      Atomic.fetch_and_add t 1 = cells_per_segment - 1
 
-    let incr_cancelled t_atomic =
-      Atomic.fetch_and_add t_atomic 1 = cells_per_segment - 1
-
-    let rec try_inc_pointers t_atomic =
-      let cur = Atomic.get t_atomic in
-      if cur = removed then false
+    let rec try_inc_pointers t =
+      let v = Atomic.get t in
+      if v = v_removed then false
       else (
-        if Atomic.compare_and_set t_atomic cur (cur + (1 lsl 16)) then true
-        else try_inc_pointers t_atomic
+        if Atomic.compare_and_set t v (v + (1 lsl 16)) then true
+        else try_inc_pointers t
       )
 
-    let dec_pointers t_atomic =
-      Atomic.fetch_and_add t_atomic (-1 lsl 16) = removed + (1 lsl 16)
+    let dec_pointers t =
+      Atomic.fetch_and_add t (-1 lsl 16) = v_removed + (1 lsl 16)
+
+    let removed t =
+      Atomic.get t = v_removed
+
+    let validate ~expected_pointers t =
+      let v = Atomic.get t in
+      assert (cancelled v >= 0 && cancelled v <= cells_per_segment);
+      if cancelled v = cells_per_segment then assert (pointers v > 0);
+      if pointers v <> expected_pointers then
+        Fmt.failwith "Bad pointer count!"
   end
 
   module Segment : sig
     type 'a t
 
+    val make_init : unit -> 'a t
+    (* [make_init ()] is a new initial segment. *)
+
     val id : _ t -> int
 
     val get : 'a t -> int -> 'a Cell.t Atomic.t
+    (* [get t offset] is the cell at [offset] within [t]. *)
 
     val try_inc_pointers : _ t -> bool
     (* Atomically increment the pointers count if the segment isn't removed.
@@ -105,20 +122,28 @@ module Make(Cell : S.CELL) = struct
        needed. *)
 
     val find : 'a t -> int -> 'a t
+    (* [find t id] finds the segment [id] searching forwards from [t].
+
+       If the target segment has been removed, it returns the next non-removed segment. *)
 
     val clear_prev : _ t -> unit
-
-    val make_init : unit -> 'a t
-
-    val validate : 'a t -> suspend:'a t -> resume:'a t -> unit
-
-    val dump_list : label:Index.t Fmt.t -> 'a t Fmt.t
+    (* The resumer has reached this segment, so it will never need to skip over any previous
+       segments. Therefore, the previous pointer is no longer required. *)
 
     val on_cancelled_cell : _ t -> unit
+    (* Increment the cancelled-cells counter, and remove the segment if it is no longer useful. *)
+
+    val validate : 'a t -> suspend:'a t -> resume:'a t -> unit
+    (* [validate t ~suspend ~resume] checks that [t] is in a valid state, assuming there are no operations currently in progress.
+       [suspend] and [resume] are the segments of the suspend and resume pointers, both of which must be reachable from [t]. *)
+
+    val dump_list : label:Index.t Fmt.t -> 'a t Fmt.t
+    (* [dump_list] formats this segment and all following ones for debugging.
+       @param label Used to annotate indexes. *)
   end = struct
     type 'a t = {
       id : Index.segment_id;
-      count : Count.t Atomic.t;
+      count : Count.t;
       cells : 'a Cell.t Atomic.t array;
       prev : 'a t option Atomic.t;      (* None if first, or [prev] is no longer needed *)
       next : 'a t option Atomic.t;      (* None if not yet created *)
@@ -143,7 +168,7 @@ module Make(Cell : S.CELL) = struct
       Fmt.pf f "@,@[<v2>Segment %d (prev=%a, %a):%a@]"
         t.id
         (Fmt.Dump.option pp_id) (Atomic.get t.prev)
-        Count.dump (Atomic.get t.count)
+        Count.dump t.count
         (dump_cells ~label) t;
       match Atomic.get t.next with
       | Some next -> dump_list ~label f next
@@ -157,7 +182,7 @@ module Make(Cell : S.CELL) = struct
       | None ->
         let next = {
           id = t.id + 1;
-          count = Atomic.make Count.zero;
+          count = Count.create ~pointers:0;
           cells = Array.init cells_per_segment (fun (_ : int) -> Atomic.make Cell.init);
           next = Atomic.make None;
           prev = Atomic.make (Some t);
@@ -166,7 +191,7 @@ module Make(Cell : S.CELL) = struct
         else Atomic.get t.next |> Option.get
 
     let removed t =
-      Atomic.get t.count = Count.removed
+      Count.removed t.count
 
     (* Get the previous segment, if any. *)
     let rec alive_prev t =
@@ -221,7 +246,7 @@ module Make(Cell : S.CELL) = struct
     let make_init () =
       {
         id = 0;
-        count = Atomic.make Count.init;
+        count = Count.create ~pointers:2;
         cells = Array.init cells_per_segment (fun (_ : int) -> Atomic.make Cell.init);
         next = Atomic.make None;
         prev = Atomic.make None;
@@ -233,12 +258,8 @@ module Make(Cell : S.CELL) = struct
         (if t == suspend then 1 else 0) +
         (if t == resume then 1 else 0)
       in
-      let count = Atomic.get t.count in
-      let seen_pointers = seen_pointers + Count.pointers count in
-      if Count.pointers count <> expected_pointers then
-        Fmt.failwith "Bad pointer count!";
-      assert (Count.cancelled count >= 0 && Count.cancelled count <= cells_per_segment);
-      if Count.cancelled count = cells_per_segment then assert (Count.pointers count > 0);
+      let seen_pointers = seen_pointers + expected_pointers in
+      Count.validate ~expected_pointers t.count;
       match Atomic.get t.next with
       | None -> assert (seen_pointers = 2);
       | Some next ->
