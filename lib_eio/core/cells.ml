@@ -19,6 +19,8 @@ module Make(Cell : S.CELL) = struct
     val succ : t -> t
 
     val next : t Atomic.t -> t
+
+    val pp : t Fmt.t
   end = struct
     type t = int
     type segment_id = int
@@ -33,6 +35,8 @@ module Make(Cell : S.CELL) = struct
 
     let next t_atomic =
       Atomic.fetch_and_add t_atomic (+1)
+
+    let pp f t = Fmt.pf f "%d:%d" (segment t) (offset t)
   end
 
   (** A pair with counts for the number of cancelled cells in a segment and the
@@ -165,16 +169,15 @@ module Make(Cell : S.CELL) = struct
 
     let rec dump_list ~label f t =
       ignore label;
-      Fmt.pf f "@,@[<v2>Segment %d (prev=%a, %a):%a@]"
+      Fmt.pf f "@,@[<v2>Segment %d (prev=%a, %a):%a@]@,End%a"
         t.id
         (Fmt.Dump.option pp_id) (Atomic.get t.prev)
         Count.dump t.count
-        (dump_cells ~label) t;
+        (dump_cells ~label) t
+        label (Index.of_segment (t.id + 1));
       match Atomic.get t.next with
       | Some next -> dump_list ~label f next
-      | None ->
-        Fmt.pf f "@,End";
-        label f (Index.of_segment (t.id + 1))
+      | None -> ()
 
     let next t =
       match Atomic.get t.next with

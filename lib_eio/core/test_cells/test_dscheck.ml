@@ -3,7 +3,7 @@ module Cqs2 = Simple_cqs.Make(struct let segment_order = 1 end)  (* 2 cells per 
 
 module type S = (module type of Cqs1)
 
-let debug = false
+let debug = true
 
 let test_cells (module Cqs : S) n_values () =
   let expected_total = n_values in
@@ -50,6 +50,8 @@ module Unit_cells(Config : sig val segment_order : int end) = struct
   end
   module Cells = Cells.Make(Cell)
 
+  type request = unit Cells.Segment.t * int
+
   let cancel (segment, offset) =
     let cell = Cells.Segment.get segment offset in
     if Atomic.compare_and_set cell Empty Cancelled then (
@@ -62,9 +64,10 @@ module Unit_cells(Config : sig val segment_order : int end) = struct
     let cell = Cells.Segment.get segment offset in
     Atomic.compare_and_set cell Empty Value
 
-  let suspend t = Cells.next_suspend t
+  let suspend t : request = Cells.next_suspend t
   let make = Cells.make
-  let dump = Cells.dump
+  let dump f t = Atomic.check (fun () -> Cells.dump f t; true)
+  let validate t = Atomic.check (fun () -> Cells.validate t; true)
 end
 
 (* A producer writes [n_items] to the queue (retrying if the cell gets cancelled first).
@@ -104,11 +107,43 @@ let test_skip_segments ~segment_order () =
                Cells.Cells.Position.index t.resume);
     )
 
+(* Create a list of [n_internal + 2] segments and cancel all the internal segments.
+   Ensure the list is valid afterwards.
+   This is simpler than [test_skip_segments], so we can test longer sequences. *)
+let test_cancel_only ~n_internal () =
+  let module Cells = Unit_cells(struct let segment_order = 0 end) in
+  let t = Cells.make () in
+  ignore (Cells.suspend t : Cells.request);
+  let internals = Array.init n_internal (fun _ -> Cells.suspend t) in
+  ignore (Cells.suspend t : Cells.request);
+  for i = 0 to n_internal - 1 do
+    Atomic.spawn (fun () ->
+        if debug then Fmt.pr ">> %a@." Cells.dump t;
+        assert (Cells.cancel internals.(i));
+        if debug then Fmt.pr "<< %a@." Cells.dump t;
+        (* [validate] is only supposed to work when at rest, but it seems to pass even during parallel cancels! *)
+        Cells.validate t
+      )
+  done;
+  Atomic.final
+    (fun () ->
+       assert (Cells.resume t);
+       assert (Cells.resume t);
+       if debug then Fmt.pr "%a@." Cells.dump t;
+       Cells.validate t;
+       assert (Cells.Cells.Position.index t.suspend =
+               Cells.Cells.Position.index t.resume);
+    )
+
 (* These tests take about 7s on my machine, with https://github.com/ocaml-multicore/dscheck/pull/3 *)
 let () =
+  print_endline "Test cancelling segments:";
+  Atomic.trace (test_cancel_only ~n_internal:3);
+(*
   print_endline "Test cancelling segments:";
   Atomic.trace (test_skip_segments ~segment_order:1);
   print_endline "Test with 1 cell per segment:";
   Atomic.trace (test_cells (module Cqs1) 2);
   print_endline "Test with 2 cells per segment:";
   Atomic.trace (test_cells (module Cqs2) 2)
+*)
