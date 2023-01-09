@@ -196,3 +196,6 @@ let create n =
     cells = Cells.make ();
     state = Atomic.make n;
   }
+
+let get_value t =
+  max 0 (Atomic.get t.state)

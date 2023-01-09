@@ -1,7 +1,7 @@
 # Setting up the environment
 
 ```ocaml
-# #require "eio_main";;
+# #require "eio.mock";;
 ```
 
 ```ocaml
@@ -12,8 +12,7 @@ module S = Eio.Stream
 exception Cancel
 
 let run fn =
-  Eio_main.run @@ fun _ ->
-  fn ()
+  Eio_mock.Backend.run fn
 
 let add t v =
   traceln "Adding %d to stream" v;

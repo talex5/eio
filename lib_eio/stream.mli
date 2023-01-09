@@ -45,3 +45,6 @@ val length : 'a t -> int
 
 val is_empty : 'a t -> bool
 (** [is_empty t] is [length t = 0]. *)
+
+val dump : _ t Fmt.t
+(** [dump] formats the internal state of a stream, for debugging. *)

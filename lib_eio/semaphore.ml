@@ -38,5 +38,4 @@ let acquire t =
   );
   Ctf.note_read t.id
 
-let get_value t =
-  max 0 (Atomic.get t.state.state)
+let get_value t = Sem_state.get_value t.state
