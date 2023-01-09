@@ -109,6 +109,28 @@ let acquire t =
      which happens if we decremented *from* a positive one. *)
   s > 0
 
+(* The paper "A formally-verified framework for fair synchronization in Kotlin
+   coroutines" describes this approach as "naive". However, the argument in the
+   paper (Appendix B) seems unconvincing. The troublesome case is when the
+   counter indicates there are no free resources, but an unlock permit is
+   waiting in a cell. Then [try_acquire] would return [false], but [acquire]
+   would get the token and succeed.
+
+   However, there is no real problem here. We know that some [acquire] thread
+   is racing with us to acquire the lock, so we always act as if that won the
+   race.
+
+   The system can't come to rest with e.g. s=0 and an unread permit in the
+   queue because we only write a permit when we know someone will read it. *)
+let rec try_acquire t =
+  let s = Atomic.get t.state in
+  if s > 0 then (
+    if Atomic.compare_and_set t.state s (s - 1) then true
+    else try_acquire t
+  ) else (
+    false
+  )
+
 let suspend t k : request option =
   let (segment, cell) = Cells.next_suspend t.cells in
   if Atomic.compare_and_set cell In_transition (Request k) then Some (t, segment, cell)
