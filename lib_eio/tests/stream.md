@@ -63,7 +63,7 @@ Some
 Stream (items=-1)
   Queue:
     Segment 0 (prev=None, pointers=2, cancelled=0):
-      Request (resume)
+      Consumer (resume)
       Empty (suspend)
       Empty
       Empty
@@ -209,7 +209,7 @@ val request : string T.take_request =
 Stream (items=-1)
   Queue:
     Segment 0 (prev=None, pointers=2, cancelled=0):
-      Request (resume)
+      Consumer (resume)
       Empty (suspend)
       Empty
       Empty

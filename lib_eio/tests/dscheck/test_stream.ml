@@ -1,11 +1,11 @@
-let debug = false
+let debug = true
 
 module T = Stream_state
 
 let test ~capacity ~prod ~cons () =
   let expected_total = (prod * (1 + prod) / 2) in
   let messages = ref [] in
-  let log fmt = (fmt ^^ "@.") |> Format.kasprintf @@ fun msg -> messages := msg :: !messages in
+  let log fmt = (fmt ^^ "@.") |> Format.kasprintf @@ fun msg -> print_endline msg; messages := msg :: !messages in
   if debug then log "== start ==";
   let t = T.create capacity in
   let total = ref 0 in
