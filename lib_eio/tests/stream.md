@@ -29,9 +29,9 @@ Initially the queue is empty and there are no waiters.
 ```ocaml
 # let t : string T.t = T.create 1;;
 val t : string T.t =
-  {T.items = <abstr>; capacity = 1; queue = <abstr>; producers = <abstr>}
+  {T.count = <abstr>; capacity = 1; queue = <abstr>; producers = <abstr>}
 # show t;;
-Stream (items=0)
+Stream (items=0,borrows=0)
   Queue:
     Segment 0 (prev=None, pointers=2, cancelled=0):
       Empty (suspend) (resume)
@@ -56,11 +56,11 @@ Adding one waiter makes the item count go negative:
 cons1: Waiting for value
 - : string T.take_request option =
 Some
- ({T.items = <abstr>; capacity = 1; queue = <abstr>; producers = <abstr>},
+ ({T.count = <abstr>; capacity = 1; queue = <abstr>; producers = <abstr>},
   <abstr>, <abstr>)
 
 # show t;;
-Stream (items=-1)
+Stream (items=-1,borrows=0)
   Queue:
     Segment 0 (prev=None, pointers=2, cancelled=0):
       Consumer (resume)
@@ -87,7 +87,7 @@ Added A
 - : string T.add_request option = None
 
 # show t;;
-Stream (items=0)
+Stream (items=0,borrows=0)
   Queue:
     Segment 0 (prev=None, pointers=2, cancelled=0):
       Finished
@@ -113,7 +113,7 @@ Added B
 - : string T.add_request option = None
 
 # show t;;
-Stream (items=1)
+Stream (items=1,borrows=0)
   Queue:
     Segment 0 (prev=None, pointers=2, cancelled=0):
       Finished
@@ -137,11 +137,11 @@ Adding a third value must wait (the item count now exceeds capacity):
 Waiting for space to add C
 - : string T.add_request option =
 Some
- ({T.items = <abstr>; capacity = 1; queue = <abstr>; producers = <abstr>},
+ ({T.count = <abstr>; capacity = 1; queue = <abstr>; producers = <abstr>},
   <abstr>, <abstr>, "C")
 
 # show t;;
-Stream (items=2)
+Stream (items=2,borrows=0)
   Queue:
     Segment 0 (prev=None, pointers=2, cancelled=0):
       Finished
@@ -167,7 +167,7 @@ cons2: Took B
 - : string T.take_request option = None
 
 # show t;;
-Stream (items=1)
+Stream (items=1,borrows=0)
   Queue:
     Segment 0 (prev=None, pointers=2, cancelled=0):
       Finished
@@ -198,15 +198,15 @@ Cancelling a consumer restores the item count:
 ```ocaml
 # let t : string T.t = T.create 1;;
 val t : string T.t =
-  {T.items = <abstr>; capacity = 1; queue = <abstr>; producers = <abstr>}
+  {T.count = <abstr>; capacity = 1; queue = <abstr>; producers = <abstr>}
 # let request = take t "cons1" |> Option.get;;
 cons1: Waiting for value
 val request : string T.take_request =
-  ({T.items = <abstr>; capacity = 1; queue = <abstr>; producers = <abstr>},
+  ({T.count = <abstr>; capacity = 1; queue = <abstr>; producers = <abstr>},
    <abstr>, <abstr>)
 
 # show t;;
-Stream (items=-1)
+Stream (items=-1,borrows=0)
   Queue:
     Segment 0 (prev=None, pointers=2, cancelled=0):
       Consumer (resume)
@@ -229,7 +229,7 @@ Stream (items=-1)
 - : bool = true
 
 # show t;;
-Stream (items=0)
+Stream (items=0,borrows=0)
   Queue:
     Segment 0 (prev=None, pointers=2, cancelled=1):
       Cancelled (resume)
@@ -252,18 +252,18 @@ Cancelling a producer restores the item count:
 ```ocaml
 # let t : string T.t = T.create 1;;
 val t : string T.t =
-  {T.items = <abstr>; capacity = 1; queue = <abstr>; producers = <abstr>}
+  {T.count = <abstr>; capacity = 1; queue = <abstr>; producers = <abstr>}
 # add t "A";;
 Added A
 - : string T.add_request option = None
 # let request = add t "B" |> Option.get;;
 Waiting for space to add B
 val request : string T.add_request =
-  ({T.items = <abstr>; capacity = 1; queue = <abstr>; producers = <abstr>},
+  ({T.count = <abstr>; capacity = 1; queue = <abstr>; producers = <abstr>},
    <abstr>, <abstr>, "B")
 
 # show t;;
-Stream (items=2)
+Stream (items=2,borrows=0)
   Queue:
     Segment 0 (prev=None, pointers=2, cancelled=0):
       Value (suspend)
@@ -284,7 +284,7 @@ Stream (items=2)
 - : bool = true
 
 # show t;;
-Stream (items=1)
+Stream (items=1,borrows=0)
   Queue:
     Segment 0 (prev=None, pointers=2, cancelled=0):
       Value (suspend)

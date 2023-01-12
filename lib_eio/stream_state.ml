@@ -202,8 +202,46 @@ module Overflow = struct
     Cells.next_suspend t
 end
 
+module Count = struct
+  (* Owned slots: max 0 (t.capacity - borrowed_slots - items)
+     Each consumer gives us a slot by decrementing items, but it may temporarily
+     borrow it back (while cancelling). *)
+  type t = int  (* XXX int63 *)
+
+  let zero = 0
+
+  let one_item = 1 lsl 16
+  let items t = t asr 16
+  let borrowed_slots t = t land 0xffff
+
+  let pred_items t = t - one_item
+
+  let succ_borrowed = succ
+
+  let fetch_and_incr_items a =
+    Atomic.fetch_and_add a one_item
+
+  let fetch_and_decr_items a =
+    Atomic.fetch_and_add a (-one_item)
+
+  let fetch_and_decr_borrowed a =
+    Atomic.fetch_and_add a (-1)
+
+  let incr_items_and_decr_borrowed a =
+    ignore (Atomic.fetch_and_add a (one_item - 1) : int)
+
+  let has_overflow t ~capacity =
+    items t > capacity - borrowed_slots t
+
+  let has_space t ~capacity =
+    items t < capacity - borrowed_slots t
+
+  let pp f t =
+    Fmt.pf f "items=%d,borrows=%d" (items t) (borrowed_slots t)
+end
+
 type 'a t = {
-  items : int Atomic.t;
+  count : Count.t Atomic.t;
   capacity : int;
   queue : 'a Main.Cells.t;                   (* Values waiting to be consumed or consumers waiting for values *)
   producers : unit Overflow.Cells.t;         (* Producers waiting for space *)
@@ -211,6 +249,45 @@ type 'a t = {
 
 type 'a take_request = 'a t * 'a Main.Cells.segment * 'a Main.Cell.t Atomic.t
 type 'a add_request = 'a t * unit Overflow.Cells.segment * Overflow.cell Atomic.t * 'a
+
+let incr_items t =
+  let old = Count.fetch_and_incr_items t.count in
+  if Count.has_space old ~capacity:t.capacity then `Got_slot
+  else `Full
+
+(* Takes a slot, since it may need to create free space in [main]. *)
+let decr_items t =
+  let old = Count.fetch_and_decr_items t.count in
+  if Count.has_overflow old ~capacity:t.capacity then `Slot_refused
+  else `Slot_accepted
+
+(* Like [decr_items], but just returns [false] if it would need a slot. *)
+let rec decr_items_if_overflow t =
+  let cur = Atomic.get t.count in
+  if Count.has_overflow cur ~capacity:t.capacity then (
+    if Atomic.compare_and_set t.count cur (Count.pred_items cur) then true
+    else decr_items_if_overflow t
+  ) else false
+
+(* Used by the consumer when cancelling.
+   Effectively, we are reducing [capacity].
+   If we need a slot, the operation just fails. *)
+let rec borrow_slot t =
+  let cur = Atomic.get t.count in
+  if Count.has_space cur ~capacity:t.capacity then (
+    if Atomic.compare_and_set t.count cur (Count.succ_borrowed cur) then true
+     else borrow_slot t
+  ) else false
+
+let unborrow_slot t =
+  let old = Count.fetch_and_decr_borrowed t.count in
+  if Count.has_overflow old ~capacity:t.capacity then `Slot_refused
+  else `Slot_accepted
+
+(* Like [incr_items], but since we're unborrowing at the same time this doesn't
+   change the overall number of slots held by [t]. *)
+let unborrow_slot_incr_items t =
+  Count.incr_items_and_decr_borrowed t.count
 
 (* Need to decrement [waiting_producers] before resuming. *)
 let add2 (request : _ add_request) k =
@@ -230,17 +307,16 @@ let add2 (request : _ add_request) k =
   )
 
 let add t v : _ add_request option =
-  let old_items = Atomic.fetch_and_add t.items 1 in
-  if old_items < t.capacity then (
+  match incr_items t with
+  | `Got_slot ->
     (* We incremented [items] and [items_in_stream].
        We took a slot from [items], which we'll use to store the value: *)
     Main.add t.queue v;
     None
-  ) else (
+  | `Full ->
     (* We must wait (no slot available). We incremented [items] and [waiting_producers]. *)
     let segment, cell = Overflow.suspend t.producers in
     Some (t, segment, cell, v)  (* Must call [add2] *)
-  )
 
 (* We have previously incremented [waiting_consumers].
    We need to reverse that when resuming. *)
@@ -265,10 +341,13 @@ let rec wake_producer (t:_ t) =
 
 let take t : ('a, 'a take_request) result =
   (* We decrement [items] and increment [waiting_consumers], producing a new slot: *)
-  let prev_items = Atomic.fetch_and_add t.items (-1) in
-  (* If the stream was above capacity, pass the new slot to the next producer.
-     Otherwise, [items] took the new slot. *)
-  if prev_items > t.capacity then wake_producer t;
+  begin match decr_items t with
+    | `Slot_accepted -> ()
+    | `Slot_refused ->
+      (* If the stream was above capacity, pass the new slot to the next producer.
+         Otherwise, [t.items] took the new slot. *)
+      wake_producer t;
+  end;
   let (segment, cell) = Main.Cells.next_suspend t.queue in
   match Atomic.get cell with
   | Empty -> Error (t, segment, cell) (* Must call [take2] later *)
@@ -286,91 +365,64 @@ let take t : ('a, 'a take_request) result =
 let cancel_take (t, segment, cell) =
   match (Atomic.get cell : _ Main.Cell.t) with
   | Consumer _ as old ->
-    (* Conceptually, cancelling is as if a producer showed up and resumed us with a special
-       Cancelled value. *)
-    let rec aux () =
-      (* Simulate a producer adding a cancel token to the stream: *)
-      let items = Atomic.get t.items in
-      if items >= 0 then (
-        (* There's no point cancelling because there are enough items for us to continue,
-           and cancelling now might cause complications. *)
+    if borrow_slot t then (
+      (* The stream's capacity has been reduced. We can use the borrowed slot to cancel. *)
+      if Atomic.compare_and_set cell old Cancelled then (
+        (* The usual case - we cancelled successfully. *)
+        unborrow_slot_incr_items t;
+        Main.Cells.cancel_cell segment;
+        true
+      ) else (
+        (* We got resumed first. Return the slot and abort the cancel. *)
+        begin match unborrow_slot t with
+          | `Slot_accepted -> ()
+          | `Slot_refused -> wake_producer t
+        end;
         false
-      ) else if Atomic.compare_and_set t.items items (items + 1) then (
-        (* We took ownership of a slot from [items].
-           We also incremented [waiting_producers].
-           Our fake provider is now committed to adding an item to the stream.
-           We'll try to place its cancel token in our cell: *)
-        if Atomic.compare_and_set cell old Cancelled then (
-          (* The usual case. We received the fake token and have successfully cancelled.
-             [waiting_producers] goes back down due to writing something,
-             and [waiting_consumers] goes down by being cancelled, taking the extra slot with it. *)
-          Main.Cells.cancel_cell segment;
-          true
-        ) else (
-          (* Another producer arrived at the same time and resumed us instead!
-             That's fine (we'll abort the cancel and use the value), but
-             we need to decrement [waiting_producers] and consume our slot. *)
-          let prev_items = Atomic.fetch_and_add t.items (-1) in (* Decrements [waiting_producers] *)
-          (* If we're now above capacity, pass the spare slot to the next producer.
-             Otherwise, the slot is owned by [t.items] again. *)
-          if prev_items > t.capacity then wake_producer t;
-          false
-        )
-      )
-      else aux ()
-    in
-    aux ()
+      );
+    ) else (
+      (* There is no free space in the queue, so we can't cancel.
+         We're being resumed at the moment anyway. *)
+      false
+    )
   | Value _ | Finished -> false     (* We got resumed first *)
   | Cancelled -> invalid_arg "Already cancelled!"
   | Empty -> assert false
 
+(* Cancelling a producer is a bit easier. If we get resumed while cancelling we just pass the slot to another
+   producer and continue cancelling. Consumers can't do that because the values might get out of order, but
+   we don't promise anything about the order of waiting producers. *)
 let cancel_add (request : _ add_request) =
   let (t, segment, cell, _v) = request in
   match (Atomic.get cell : Overflow.cell) with
-  | Request _ as old ->
+  | Request r as old ->
     if Atomic.compare_and_set cell old In_transition then (
-      let rec aux () =
-        (* Create a fake consumer to read our value *)
-        let items = Atomic.get t.items in
-        if items <= t.capacity then (
-          (* There's no point cancelling because there are enough consumers for us to continue,
-             and cancelling now might cause complications. *)
-          (* TODO: switch back to Finished, if possible *)
-          false
+      if decr_items_if_overflow t then (
+        (* At this point we have cancelled and will not deliver our value to anyone. *)
+        if Atomic.compare_and_set cell In_transition Finished then (
+          Overflow.Cells.cancel_cell segment
         ) else (
-          if Atomic.compare_and_set t.items items (items - 1) then (
-            (* Fake consumer ready to create a new cell. We'll transfer our value to it...
-               We have incremented [waiting_consumers].
-               We thus gained a slot too, which didn't go to [items] because we're over capacity. *)
-            if Atomic.compare_and_set cell In_transition Finished then (
-              (* Success. The fake consumer read our value and we can resume.
-                 That decrements [waiting_consumers] and [waiting_producers] and destroys the slot. *)
-              Overflow.Cells.cancel_cell segment;
-              true
-            ) else (
-              (* Another consumer woke us first, giving us a slot (in addition to the one we already had).
-                 Need to decrement [waiting_consumers] and lose both slots. *)
-              let old_items = Atomic.fetch_and_add t.items 1 in   (* Decrements [waiting_consumers], which takes one slot. *)
-              if old_items < t.capacity then (
-                (* [t.items] owns the other slot now. *)
-              ) else (
-                (* We have an extra slot and we have other producers. Give it to the next producer. *)
-                (* XXX: how come we get here in both cancel functions?? *)
-                wake_producer t
-              );
-              false
-            )
-          ) else aux ()
-        )
-      in
-      aux ()
+          (* Someone tried to resume us after we were cancelled but before we updated the cell.
+             Pass the slot on to another producer. *)
+          wake_producer t
+        );
+        true
+      ) else (
+        (* There's no point cancelling because there are enough consumers for us to continue,
+           and cancelling now might cause complications. *)
+        if not (Atomic.compare_and_set cell In_transition old) then (
+          (* Someone tried to resume us while we were busy. Do it now. *)
+          r ()
+        );
+        false
+      )
     ) else false          (* We got resumed first *)
   | Finished -> false     (* We got resumed first *)
-  | In_transition -> invalid_arg "Already cancelling!"
+  | In_transition -> assert false
 
 let dump f t =
-  Fmt.pf f "@[<v2>Stream (items=%d)@,@[<v2>Queue:@,%a@]@,@[<v2>Producers:@,%a@]@]"
-    (Atomic.get t.items)
+  Fmt.pf f "@[<v2>Stream (%a)@,@[<v2>Queue:@,%a@]@,@[<v2>Producers:@,%a@]@]"
+    Count.pp (Atomic.get t.count)
     Main.Cells.dump t.queue
     Overflow.Cells.dump t.producers
 
@@ -379,8 +431,8 @@ let create capacity =
   {
     queue = Main.Cells.make ();
     producers = Overflow.Cells.make ();
-    items = Atomic.make 0;
+    count = Atomic.make Count.zero;
     capacity;
   }
 
-let items t = Atomic.get t.items
+let items t = Count.items (Atomic.get t.count)
