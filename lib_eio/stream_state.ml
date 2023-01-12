@@ -274,7 +274,11 @@ let rec decr_items_if_overflow t =
    If we need a slot, the operation just fails. *)
 let rec borrow_slot t =
   let cur = Atomic.get t.count in
-  if Count.has_space cur ~capacity:t.capacity then (
+  (* We could use [Count.has_space] here and allow cancelling in more places,
+     but it isn't necessary and slows down the stress tests. Instead, we ensure
+     there are still enough certainly-not-cancelling consumers to consume all
+     values. *)
+  if Count.items cur + Count.borrowed_slots cur < 0 then (
     if Atomic.compare_and_set t.count cur (Count.succ_borrowed cur) then true
      else borrow_slot t
   ) else false
