@@ -403,6 +403,85 @@ If the fork itself fails, we still close the connection:
 Exception: Failure "Simulated error".
 ```
 
+## run_server
+
+```ocaml
+# let run_eio_server ~max_conn ~clients env sw =
+    let shutdown, set_shutdown = Promise.create () in
+    let run_client id () =
+      traceln "client: Connecting to server ...";
+      let flow = Eio.Net.connect ~sw env#net addr in
+      Eio.Flow.copy_string "Hello from client" flow;
+      Eio.Flow.shutdown flow `Send;
+      let msg = read_all flow in
+      traceln "client received: %S" msg;
+      if id < clients then () else Promise.resolve set_shutdown ()
+    in
+    let connection_handler clock flow _addr =
+      Fun.protect (fun () ->
+        let msg = read_all flow in
+        traceln "Server received: %S" msg;
+        Eio.Time.sleep clock 0.01
+      ) ~finally:(fun () -> Eio.Flow.copy_string "Bye" flow)
+    in
+    let server_sock = Eio.Net.listen ~reuse_addr:true ~backlog:5 ~sw env#net addr in
+    let connection_handler = connection_handler env#clock in
+    let clients = List.init clients (fun id -> run_client (id+1)) in
+    let server () = Eio.Net.run_server ~max_connections:max_conn ~shutdown server_sock connection_handler in
+    Fiber.all (server :: clients)
+  ;;
+val run_eio_server :
+  max_conn:int ->
+  clients:int ->
+  < clock : #Eio.Time.clock; net : #Eio.Net.t; .. > -> Switch.t -> unit =
+  <fun>
+```
+max_connections = 1
+
+```ocaml
+# Eio_main.run @@ fun env ->
+  Switch.run @@ fun sw ->
+  run_eio_server ~max_conn:1 ~clients:4 env sw
+  ;;
++client: Connecting to server ...
++client: Connecting to server ...
++client: Connecting to server ...
++client: Connecting to server ...
++Server received: "Hello from client"
++client received: "Bye"
++Server received: "Hello from client"
++client received: "Bye"
++Server received: "Hello from client"
++client received: "Bye"
++Server received: "Hello from client"
++client received: "Bye"
+- : unit = ()
+```
+
+max_connections = 5
+
+```ocaml
+# Eio_main.run @@ fun env ->
+  Switch.run @@ fun sw ->
+  run_eio_server ~max_conn:5 ~clients:5 env sw ;;
++client: Connecting to server ...
++client: Connecting to server ...
++client: Connecting to server ...
++client: Connecting to server ...
++client: Connecting to server ...
++Server received: "Hello from client"
++Server received: "Hello from client"
++Server received: "Hello from client"
++Server received: "Hello from client"
++Server received: "Hello from client"
++client received: "Bye"
++client received: "Bye"
++client received: "Bye"
++client received: "Bye"
++client received: "Bye"
+- : unit = ()
+```
+
 ## Socketpair
 
 ```ocaml

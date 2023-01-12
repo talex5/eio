@@ -269,3 +269,25 @@ let with_tcp_connect ?(timeout=Time.Timeout.none) ~host ~service t f =
   | exception (Exn.Io _ as ex) ->
     let bt = Printexc.get_raw_backtrace () in
     Exn.reraise_with_context ex bt "connecting to %S:%s" host service
+
+let run_server ?(max_connections=Int.max_int) ?shutdown ?(on_error=raise) listening_socket connection_handler =
+  (if max_connections < 0 then invalid_arg "max_connections");
+  let connections = Semaphore.make max_connections in
+  let shutdown =
+    match shutdown with
+    | Some p -> p
+    | None -> fst (Promise.create ())
+  in
+  let connection_handler flow addr =
+    connection_handler flow addr ;
+    Semaphore.release connections ;
+  in
+  let rec loop sw =
+    Fiber.first
+      (fun () ->
+        Semaphore.acquire connections ;
+        accept_fork ~sw listening_socket ~on_error connection_handler ;
+        loop sw )
+      (fun () -> Promise.await shutdown )
+  in
+  Switch.run (fun sw -> loop sw)
