@@ -366,6 +366,35 @@ let take t : ('a, 'a take_request) result =
        without us taking some action first *)
     assert false
 
+let take_nonblocking t : 'a option =
+  (* We decrement [items] and increment [waiting_consumers], producing a new slot: *)
+  begin match decr_items t with
+    | `Slot_accepted -> ()
+    | `Slot_refused ->
+      (* If the stream was above capacity, pass the new slot to the next producer.
+         Otherwise, [t.items] took the new slot. *)
+      wake_producer t;
+  end;
+  let has_value (cell : _ Main.Cell.t Atomic.t) =
+    match Atomic.get cell with
+    | Empty -> false    (* Reject *)
+    | Value _ -> true
+    | Consumer _ | Cancelled | Finished ->
+      (* Another consumer got here first. It will be rejected on the CAS. *)
+      true
+  in
+  match Main.Cells.next_suspend_if t.queue has_value with
+  | None -> None
+  | Some (_segment, cell) ->
+    match Atomic.get cell with
+    | Value v ->
+      Atomic.set cell Finished;
+      Some v
+    | Empty | Consumer _ | Cancelled | Finished ->
+      (* These are unreachable from the previously-observed non-Empty state
+         without us taking some action first *)
+      assert false
+
 let cancel_take (t, segment, cell) =
   match (Atomic.get cell : _ Main.Cell.t) with
   | Consumer _ as old ->

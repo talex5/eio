@@ -338,6 +338,8 @@ module Make(Cell : CELL) = struct
        If [t]'s segment is all cancelled and no longer exists it will skip it and retry.
        If [clear_prev] then the previous pointer is no longer required. *)
 
+    val next_if : 'a t -> ('a Cell.t Atomic.t -> bool) -> ('a Segment.t * 'a Cell.t Atomic.t) option
+
     val resume_all : 'a t -> stop:Index.t -> ('a Cell.t Atomic.t -> unit) -> unit
     (* [resume_all t ~stop f] advances [t] to [stop], then calls [f cell] on each cell advanced over. *)
 
@@ -405,6 +407,29 @@ module Make(Cell : CELL) = struct
         next ~clear_prev t
       )
 
+    (* Like [next t ~clear_prev:None], but test the cell with [p] before accepting the cell. *)
+    let rec next_if t p =
+      (* Get the segment first before the index. Even if [idx] moves forwards after this,
+         we'll still be able to reach it from [r]. *)
+      let r = Atomic.get t.segment in
+      let i = Atomic.get t.idx in
+      let id = Index.segment i in
+      let s = find_and_move_forward t r id in
+      if Segment.id s = id then (
+        let cell = Segment.get s (Index.offset i) in
+        if p cell then (
+          if Atomic.compare_and_set t.idx i (Index.succ i) then
+            Some (s, Segment.get s (Index.offset i))
+          else next_if t p
+        ) else None
+      ) else (
+        (* The segment we wanted contains only cancelled cells.
+           Try to update the index to jump over those cells, then retry. *)
+        let s_index = Index.of_segment (Segment.id s) in
+        ignore (Atomic.compare_and_set t.idx (Index.succ i) s_index : bool);
+        next_if t p
+      )
+
     let rec resume_all t ~stop f =
       (* Get the segment first before the index. Even if [idx] moves forwards after this,
          we'll still be able to reach it from [start_seg]. *)
@@ -443,6 +468,9 @@ module Make(Cell : CELL) = struct
 
   let next_suspend t =
     Position.next t.suspend ~clear_prev:false
+
+  let next_suspend_if t p =
+    Position.next_if t.suspend p
 
   let next_resume t =
     snd @@ Position.next t.resume ~clear_prev:true

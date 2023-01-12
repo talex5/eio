@@ -67,6 +67,8 @@ module Make(Cell : CELL) : sig
 
       This function is lock-free and is safe to call even from a signal handler or GC finalizer. *)
 
+  val next_suspend_if : 'a t -> ('a Cell.t Atomic.t -> bool) -> ('a segment * 'a Cell.t Atomic.t) option
+
   val next_resume : 'a t -> 'a Cell.t Atomic.t
   (** [next_resume t] atomically returns the next resume cell.
 
