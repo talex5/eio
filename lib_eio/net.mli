@@ -209,26 +209,32 @@ val accept_sub :
 
 val run_server :
   ?max_connections:int ->
-  ?shutdown:unit Promise.t ->
-  ?on_error:(exn -> unit) ->
+  ?additional_domains:(#Domain_manager.t * int) ->
+  sw:Switch.t ->
+  on_error:(exn -> unit) ->
   #listening_socket ->
   connection_handler ->
   unit
-(** [run_server sock conn_handler] establishes a concurrent socket server [s]. [s] runs on a {e single}
-    OCaml {!module:Stdlib.Domain}. It listens to incoming client connections as specified by socket [sock].
-    On a successful establishment of client connection with [s], [conn_handler] is executed. Otherwise [on_error]
-    is executed.
+(** [run_server ~sw ~on_error sock connection_handler] establishes a concurrent socket server [s]. It listens to
+    incoming client connections as specified by socket [sock]. On a successful establishment of client connection 
+    with [s], [connection_handler] is executed. Otherwise [on_error] is executed.
 
-    @param on_error is a connection error handler. By defailt it is set to {!val:raise}.
+    {b Running Parallel Server}
+
+    By default [s] runs on a {e single} OCaml {!module:Domain}. However, if [additional_domains:(domain_mgr, domains)]
+    parameter is given, then [s] will run [connection_handler] in parallel over the specified number of [domains]. In 
+    such cases ensure that [connection_handler] only accesses thread-safe values. Addtionally, it is recommended that
+    [domains] value not exceed the value that is reported by {!val:Domain.recommended_domain_count} minus 1, i.e.
+    [domains < Domain.recommended_domain_count - 1]. It has been observed that doing so results in a performance 
+    regression.
+
     @param max_connections determines the maximum number of concurrent connections accepted by [s] at any time.
                            The default is [Int.max_int].
-
-    @param shutdown is a promise instance awaiting a [unit] value of [()]. Fulfillment of this promise notifies [s]
-                    to stop accepting incoming client connection requests. If this parameter is not
-                    given and/or is never fulfilled - the default setting - [s] keeps accepting client connections
-                    indefinitely.
-
-    @raise Invalid_argument if [max_connections < 0]. *)
+    @param additional_domains is [(domain_mgr, domains)] where [domains] denotes the additional domains that [s] 
+                              will to execute [connection_handler].
+    @param on_error is a connection error handler.
+    @raise Invalid_argument if [max_connections < 0].
+                            if [additional_domains = (domain_mgr, domains)] is used and [domains < 1]. *)
 
 (** {2 Datagram Sockets} *)
 

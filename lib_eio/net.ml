@@ -270,24 +270,24 @@ let with_tcp_connect ?(timeout=Time.Timeout.none) ~host ~service t f =
     let bt = Printexc.get_raw_backtrace () in
     Exn.reraise_with_context ex bt "connecting to %S:%s" host service
 
-let run_server ?(max_connections=Int.max_int) ?shutdown ?(on_error=raise) listening_socket connection_handler =
-  (if max_connections < 0 then invalid_arg "max_connections");
+let run_server ?(max_connections=Int.max_int) ?(additional_domains) ~sw ~on_error listening_socket connection_handler =
+  if max_connections < 0 then invalid_arg "max_connections";
   let connections = Semaphore.make max_connections in
-  let shutdown =
-    match shutdown with
-    | Some p -> p
-    | None -> fst (Promise.create ())
-  in
-  let connection_handler flow addr =
-    connection_handler flow addr ;
-    Semaphore.release connections ;
-  in
-  let rec loop sw =
-    Fiber.first
+  let rec accept sw : unit =
+    Fun.protect
       (fun () ->
-        Semaphore.acquire connections ;
-        accept_fork ~sw listening_socket ~on_error connection_handler ;
-        loop sw )
-      (fun () -> Promise.await shutdown )
+        Semaphore.acquire connections;
+        accept_fork ~sw ~on_error listening_socket connection_handler;
+      )
+      ~finally:(fun () -> Semaphore.release connections);
+    accept sw
   in
-  Switch.run (fun sw -> loop sw)
+  (match additional_domains with
+   | Some (domain_mgr, domains) ->
+     if domains < 1 then invalid_arg "additional_domains";
+     for _ = 2 to domains do
+       Fiber.fork ~sw @@ fun () ->
+       Domain_manager.run domain_mgr (fun () -> Switch.run @@ fun sw -> accept sw);
+     done;
+   | None -> ());
+  Switch.run @@ fun sw -> accept sw
