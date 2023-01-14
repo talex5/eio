@@ -10,62 +10,80 @@
    The consumer will place a callback in the cell and when a producer later
    arrives it will pass the value to it.
 
+   As usual with Cells, the producer and consumer may get to the cell in
+   either order (and not necessarily the same order in which they updated
+   [items]). This is not a problem, they just have to handle both cases.
+
    Step 2: a bounded queue
 
    For a bounded queue, producers may need to wait for space. Since Cells
    only allows one party to cancel, we need a second queue [overflow] for
    this.
 
-   When a producer increments [items] to be greater than [capacity], it
-   instead adds itself to [overflow] to wait for space.
+   Conceptually, there are "trays" and "tokens" (the same number of each).
+   Initially there are [capacity] trays (and token).
 
-   When a consumer decrements [items] from being over [capacity], it wakes
+   Each producer takes a token and then places its item in the next tray, along
+   with the token.
+
+   Each consumer arrives with its own additional tray and token and adds both
+   to the queue. It then takes the next free tray in the queue and, once it's
+   full, takes the tray away, along with the tray's item and token.
+
+   Having consumers bring their own trays is necessary to support 0-capacity
+   queues (where otherwise there would be no trays at all). It should also be
+   slightly faster in general. For example, if we have a queue with capacity
+   10 and 5 consumers start waiting, we can allow 15 producers to write values
+   without waiting.
+
+   The number of free tokens in the queue can be calculated from [items], and
+   is therefore updated atomically with that:
+
+     free_tokens = max 0 (capacity - items)
+
+   When a producer increments [items] to be greater than [capacity], it
+   therefore does not get a token and instead adds itself to [overflow] to wait
+   for space.
+
+   When a consumer decrements [items] from being over [capacity], it is
+   therefore unable to add its token to the queue and instead uses it to wake
    one producer.
 
-   Invariants:
+   Consumers and producers never suspend while holding a token. Therefore, when
+   the system is idle the number of free tokens is the total number of tokens
+   minus the number of filled trays. The total number of tokens is the capacity
+   plus the number of waiting consumers.
 
-   - items = items_in_stream + waiting_producers - waiting_consumers
-   - items_in_stream in 0..capacity
+   Thus, when idle:
 
-   Note that we support 0-capacity streams too.
+   - capacity + waiting_consumers - filled_trays = max 0 (capacity - items)
 
-   [waiting_producers] is the number of producers that have incremented [items]
-   and not yet written their value to [main]. [waiting_consumers] is the number
-   of consumers that have decremented [items] and not yet removed the value from
-   [main].
+   and so:
 
-   Conceptually, there are initially [capacity] slots. Adding a consumer
-   creates a new slot, so there are always [waiting_consumers + capacity] slots
-   in the system in total.
+   - waiting_consumers + capacity = filled_trays     if items >  capacity
+   - waiting_consumers + items    = filled_trays     if items <= capacity
 
-   When [items <= capacity], [items] owns [capacity - items] slots.
-   When above [capacity], it owns no slots. Each value stored in [main]
-   occupies a slot. This ensures that we never go over capacity.
+   Since filling a tray wakes a consumer if there is one, either
+   waiting_consumers or filled_trays is zero when idle, and so:
 
-   The system is at rest when no further actions can be taken without the
-   user of the stream doing something. When the system is at rest:
+   - filled_trays = capacity              if items >  capacity
+   - items = filled_trays                 if items <= capacity and waiting_consumers = 0
+   - waiting_consumers = -items           if items <= capacity and waiting_consumers > 0
 
-   - waiting_consumers > 0 -> items_in_stream = 0
-   - waiting_consumers > 0 -> waiting_producers = 0
-   - waiting_producers > 0 -> waiting_consumers = 0
-   - waiting_producers > 0 -> items_in_stream = capacity
+   In particular, it is therefore not possible to have unfilled trays when items > capacity
+   and the system is idle.
 
    Step 3: consumer cancellation
 
-   To cancel, a consumer increments [items] and marks its cell as cancelled.
-   This is as if a producer appeared and added a cancelled token to the stream,
-   which the consumer then read, and we consider [waiting_producers] to be updated
-   accordingly during the operation.
+   To cancel, a consumer removes one empty tray and one free token and leaves
+   with them, reversing the effect of it joining the stream. If there are no
+   free tokens then all trays are in the process of being resumed (either by
+   getting an item or by becoming cancelled). Therefore the consumer is about
+   to be resumed anyway and can simply ignore the cancellation request.
 
-   It is possible for the consumer to be resumed after incrementing [items] and
-   before managing to cancel its cell. In this case the cancellation operation
-   fails and the change to [items] is reverted. Conceptually, this is done by
-   adding a fake consumer to consume the cancel token from the fake producer,
-   and since neither fake party actually allocates a cell, there is no risk of
-   them getting resumed by someone else.
-
-   We have to be careful with cancellation to ensure that [items_in_stream]
-   cannot exceed [capacity]. Consider a stream with capacity 0:
+   The tricky part is doing this atomically. Removing a tray means setting its cell
+   to Cancelled, while taking a token means incrementing items. Here is an example
+   of how this could go wrong:
 
    1. A producer increments [items] to 1 and prepares to add itself to [overflow].
    2. A consumer decrements [items] to 0, writes a wakeup-token to [overflow],
@@ -75,54 +93,144 @@
    4. The producer finds the wake-up token and adds its value to [main].
    5. Now we have no producers, no consumers, and one item in a 0-capacity stream!
 
-   To avoid this, we add a rule:
+   On the other hand, having a cancelled tray while the token is still
+   available means a provider might add its item to [main] and take the queue
+   over capacity. We can't re-add the item after the producer has resumed
+   because then the item will arrive out of order. e.g the producer might see
+   that it wrote 1 then 2 to the stream, but a consumer might read 2 and then 1
+   because a second consumer got the 1 while cancelling and then re-added it.
 
-   - A consumer can only cancel by incrementing [items] to a non-positive value.
-     (actually, any value no greater than [capacity] would be OK)
+   So we first take a free token *without* incrementing items. This requires
+   adjusting free_tokens to allow briefly reserving a token:
 
-   This ensures that when the consumer increments [items] it always gets a slot,
-   which it gives to the producer being resumed.
+     free_tokens = max 0 (capacity - items - reserved_tokens)
 
-   Not being able to cancel in this case isn't a problem for the consumer because
-   if [items >= 0] then it's about to be resumed anyway
-   (since then [items_in_stream + waiting_producers >= waiting_consumers]).
-   The only way for [items] to become smaller is if new consumers join,
-   but they will be added to [main] after the consumer that tried to cancel,
-   so they won't stop it from being resumed.
+   We can't have more [reserved_tokens] than cancelling domains, so we can pack
+   [reserved_tokens] and [items] together in an int63, allowing it to be
+   updated atomically.
+
+   To cancel then, a consumer:
+
+   1. Marks its tray as Cancelling.
+   2. Takes a token by atomically incrementing [items] (if possible).
+   3. Marks its tray as Cancelled.
+
+   (1) will fail if a provider filled our tray first. In that case we just
+   ignore the cancellation request and take the item.
+
+   (2) will fail if there are no free tokens. We know that for every token
+   taken, exactly one tray will be either filled or cancelled. Therefore, if
+   all tokens have been taken then all trays will be filled or cancelled. Since
+   no one else can cancel our tray, it is about to be filled with an item. We
+   revert the change to the cell's state (if possible) and abort cancellation.
+   A provider might have wanted to fill our tray while this was happening.
+   Since we didn't decide to cancel in the end, we accept the item and allow
+   the provider to resume.
+
+   (3) will fail if a provider wanted to fill our tray but wasn't sure if we
+   were had committed to cancelling or not. We are now committed, and so
+   tell the provider to use its permit on another tray.
+
+   Some of these edge cases could perhaps be optimised a bit by spinning for a
+   bit and hoping the cell changes. This might help avoid producers losing their
+   place in the overflow queue (we don't actually promise anything about the
+   order there anyway, but it's nice to be fair when we can).
 
    Step 4: producer cancellation
 
-   To cancel, a producer decrements [items] and marks its cell as cancelled.
-   This is as if a consumer appeared and took this producer's value, and we
-   consider [waiting_consumers] to be updated accordingly during the operation.
+   Cancelling a producer is very similar to cancelling a consumer.
+   Again we need an extra "undecided" step first, because we need to mark
+   the provider cell as cancelled and decrement [items], and we can't do that
+   atomically.
 
-   As with consumers, the producer may get resumed while it is doing this.
-   In that case, the cancel operation fails and [items] is reverted as usual.
+   We can't decide to cancel before decrementing [items] because consumers
+   use that to know whether it's time to send a token to the overflow queue.
+   We can't mark our cell as cancelled before deciding to cancel either,
+   because then consumers would just skip it.
 
-   Producer cancellation provides another way for a client that had its cancel
-   operation refused to fail to get a value.
-   For example (for a 0-capacity stream):
+   Therefore, a producer waiting in the overflow queue cancels as follows:
 
-   1. A producer increments [items] to 1 and is about to add itself to [overflow].
-   2. Two consumers join, decrementing [items] to -1.
-      The first therefore writes a wake-up token to [overflow].
-   3. Both consumers try to cancel.
-      The first increments [items] to [0] and is about to mark itself as cancelled.
-      The second has its cancellation refused because there are enough items for it.
-   4. The producer finally adds itself to [overflow], finds the token, and resumes
-      the first consumer.
-   5. The first consumer tries to set its cell to Cancelled, but finds the
-      value instead. It aborts cancelling and takes the value.
-   6. The second consumer is left waiting, even though it was refused cancellation.
+   1. Mark its cell as In_transition (cancelling).
+   1. Decrement [items] (if this would not release a token).
+   2. Mark its cell as Finished (cancelled).
 
-   To avoid that we have a similar rule for producers:
+   (1) will fail if we got passed a token first. In that case we can certainly
+   write our value to [main], so we do that instead and abort cancelling.
 
-   - A producer cannot cancel by decrementing [items] to less than [capacity].
+   (2) will fail if the [main] queue is at or under capacity, in which case
+   we're not supposed to be on the [overflow] queue anyway and are in the
+   process of being resumed. In that case, the provider just aborts the
+   cancellation. It will write its value to a waiting consumer soon.
+   If we decide not to cancel we CAS back to the waiting state. If that
+   fails because we got a token, we use it to resume as usual for a
+   non-cancelled provider.
 
-   A producer will not be inconvenienced by this because if [items <= capacity] then
-   it must be in the process of being resumed.
+   (3) will fail if a consumer wrote a token there first. Since we're already
+   committed to cancelling at this point, we pass the token to the next
+   producer. We know there is one because we and the consumer both successfully
+   decremented [items] while it was overflowed.
 
-   The above has not been formally verified (exercise for reader!). *)
+   Step 5: non-blocking add
+
+   This is quite simple:
+
+   1. Increment [items] if that would get us a token.
+   2. Use the token to write to the [main] queue.
+
+   If (1) fails then the queue is full and the operation fails, as desired.
+
+   If (2) fails then the consumer may be in the Cancelling state. If so,
+   we CAS it to Cancelled (it wanted to cancel anyway) and try the next consumer.
+   Conceptually, we successfully put a null value in the tray and the
+   consumer successfully received it. Only a cancelling consumer can get a null
+   value this way, and it doesn't care since it wants to cancel anyway and it
+   can just report to the application that cancellation succeeded.
+
+   Step 6: non-blocking take
+
+   This is tricky. Consider this case:
+
+   1. We have a stream with capacity=2.
+   2. Two producers arrive, allocating two cells in [main].
+   3. The second producer writes [2] to the second cell and resumes itself.
+   4. A consumer does a non-bocking read. It is assigned the first cell.
+
+   At this point the second producer is sure it wrote an item (2) to the queue,
+   and might even mention this to the (single) consumer. What should happen if
+   the consumer now does a non-blocking read? The consumer may get [None], even
+   though it knows the stream contains a 2!
+
+   Instead, the consumer will write Cancelled into the cell (which it knows is
+   about to be filled). This will cause the producer to try another cell.
+   But the consumer needs a spare token for this.
+
+   To deal with this, we have two different paths depending on whether the queue
+   is 0-capacity or not:
+
+   If capacity > 0:
+
+   1. The non-blocking consumer decrements [items] if positive, borrowing a token at the same time.
+   2. It takes the value in the cell, if available, and returns the borrowed token.
+   3. If not, it marks its cell as Cancelled.
+   4. It increments [items], returning the borrowed token.
+
+   If capacity = 0, a non-blocking take must always wake a producer, so we only look at [overflow]:
+
+   1. The non-blocking consumer decrements [items] if positive, therefore keeping its token.
+   2. It uses the token to wake one producer, resuming one cell in [overflow].
+   3. It takes the value from the producer's cell, if available.
+
+   (1) will fail if [items <= 0]. In that case there is nothing to take and it returns [None].
+
+   (3) will fail if the producer hasn't yet written its value. In that case,
+   the consumer marks the cell as Reject. The producer will see this when it
+   writes is value and pick another cell. Conceptually, the client accepted the
+   value and the producer will add another one to the stream.
+
+   In practise, we can optimise things a bit by spinning a few times when the cell is in the
+   process of being written. However, rejecting the cell is necessary
+
+   The above has not been formally verified (exercise for reader). *)
 
 module Main = struct
   module Cell = struct
