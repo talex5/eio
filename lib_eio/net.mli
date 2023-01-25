@@ -191,11 +191,17 @@ val accept_fork :
   on_error:(exn -> unit) ->
   connection_handler ->
   unit
-(** [accept_fork socket fn] accepts a connection and handles it in a new fiber.
+(** [accept_fork ~sw ~on_error socket fn] accepts a connection and handles it in a new fiber.
 
     After accepting a connection to [socket], it runs [fn flow client_addr] in a new fiber.
 
-    [flow] will be closed when [fn] returns. *)
+    [flow] will be closed when [fn] returns. The new fiber is attached to [sw].
+
+    @param on_error Called if [connection_handler] raises an exception.
+                    This is typically a good place to log the error and continue.
+                    If the exception is an {!Eio.Io} error then the caller's address is added to it.
+                    If you don't want to handle connection errors,
+                    use [~on_error:raise] to cancel the caller's context. *)
 
 val accept_sub :
   sw:Switch.t ->
@@ -210,31 +216,30 @@ val accept_sub :
 val run_server :
   ?max_connections:int ->
   ?additional_domains:(#Domain_manager.t * int) ->
-  sw:Switch.t ->
+  ?stop:'a Promise.t ->
   on_error:(exn -> unit) ->
   #listening_socket ->
   connection_handler ->
-  unit
-(** [run_server ~sw ~on_error sock connection_handler] establishes a concurrent socket server [s]. It listens to
-    incoming client connections as specified by socket [sock]. On a successful establishment of client connection 
-    with [s], [connection_handler] is executed. Otherwise [on_error] is executed.
+  'a
+(** [run_server ~on_error sock connection_handler] establishes a concurrent socket server [s].
 
-    {b Running Parallel Server}
+    It accepts incoming client connections on socket [sock] and handles them with {!accept_fork}
+    (see that for the description of [on_error] and [connection_handler]).
+
+    {b Running a Parallel Server}
 
     By default [s] runs on a {e single} OCaml {!module:Domain}. However, if [additional_domains:(domain_mgr, domains)]
-    parameter is given, then [s] will run [connection_handler] in parallel over the specified number of [domains]. In 
-    such cases ensure that [connection_handler] only accesses thread-safe values. Addtionally, it is recommended that
-    [domains] value not exceed the value that is reported by {!val:Domain.recommended_domain_count} minus 1, i.e.
-    [domains < Domain.recommended_domain_count - 1]. It has been observed that doing so results in a performance 
-    regression.
+    parameter is given, then [s] will spawn [domains] additional domains and run accept loops in those too.
+    In such cases you must ensure that [connection_handler] only accesses thread-safe values.
+    Note that having more than {!Domain.recommended_domain_count} domains in total is likely to result in bad performance.
 
-    @param max_connections determines the maximum number of concurrent connections accepted by [s] at any time.
+    @param max_connections The maximum number of concurrent connections accepted by [s] at any time.
                            The default is [Int.max_int].
-    @param additional_domains is [(domain_mgr, domains)] where [domains] denotes the additional domains that [s] 
-                              will to execute [connection_handler].
-    @param on_error is a connection error handler.
-    @raise Invalid_argument if [max_connections < 0].
-                            if [additional_domains = (domain_mgr, domains)] is used and [domains < 1]. *)
+    @param stop Resolving this promise causes [s] to stop accepting new connections.
+                [run_server] will wait for all existing connections to finish and then return.
+                This is useful to upgrade a server without clients noticing.
+                To stop immediately, cancelling all connections, just cancel [s]'s fiber instead.
+    @param on_error Connection error handler (see {!accept_fork}). *)
 
 (** {2 Datagram Sockets} *)
 

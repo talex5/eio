@@ -270,24 +270,30 @@ let with_tcp_connect ?(timeout=Time.Timeout.none) ~host ~service t f =
     let bt = Printexc.get_raw_backtrace () in
     Exn.reraise_with_context ex bt "connecting to %S:%s" host service
 
-let run_server ?(max_connections=Int.max_int) ?(additional_domains) ~sw ~on_error listening_socket connection_handler =
-  if max_connections < 0 then invalid_arg "max_connections";
-  let connections = Semaphore.make max_connections in
-  let rec accept sw : unit =
-    Fun.protect
-      (fun () ->
-        Semaphore.acquire connections;
-        accept_fork ~sw ~on_error listening_socket connection_handler;
-      )
-      ~finally:(fun () -> Semaphore.release connections);
-    accept sw
+(* Run a server loop in a single domain. *)
+let run_server_loop ~connections ~on_error ~stop listening_socket connection_handler =
+  Switch.run @@ fun sw ->
+  let rec accept () =
+    Semaphore.acquire connections;
+    accept_fork ~sw ~on_error listening_socket (fun conn addr ->
+        Fun.protect (fun () -> connection_handler conn addr)
+            ~finally:(fun () -> Semaphore.release connections)
+      );
+    accept ()
   in
-  (match additional_domains with
-   | Some (domain_mgr, domains) ->
-     if domains < 1 then invalid_arg "additional_domains";
-     for _ = 2 to domains do
-       Fiber.fork ~sw @@ fun () ->
-       Domain_manager.run domain_mgr (fun () -> Switch.run @@ fun sw -> accept sw);
-     done;
-   | None -> ());
-  Switch.run @@ fun sw -> accept sw
+  match stop with
+  | None -> accept ()
+  | Some stop -> Fiber.first accept (fun () -> Promise.await stop)
+
+let run_server ?(max_connections=Int.max_int) ?(additional_domains) ?stop ~on_error listening_socket connection_handler : 'a =
+  if max_connections < 0 then invalid_arg "max_connections";
+  Switch.run @@ fun sw ->
+  let connections = Semaphore.make max_connections in
+  let run_server_loop () = run_server_loop ~connections ~on_error ~stop listening_socket connection_handler in
+  additional_domains |> Option.iter (fun (domain_mgr, domains) ->
+      if domains < 0 then invalid_arg "additional_domains";
+      for _ = 1 to domains do
+        Fiber.fork ~sw (fun () -> Domain_manager.run domain_mgr (fun () -> ignore (run_server_loop () : 'a)))
+      done;
+    );
+  run_server_loop ()
