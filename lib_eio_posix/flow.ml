@@ -78,6 +78,14 @@ let of_fd fd = object (_ : <Eio_unix.socket; Eio.File.rw>)
   method shutdown cmd = shutdown fd cmd
   method close = Fd.close fd
 
+  method send_msg ?dst ~fds data =
+    let dst = Option.map Eio_unix.Net.stream_addr_to_unix dst in
+    ignore (Low_level.send_msg ?dst ~fds fd (Array.of_list data) : int) (* XXX *)
+
+  method recv_msg_with_fds ~sw ~max_fds data =
+    let addr, n, fds = Low_level.recv_msg_with_fds fd ~sw ~max_fds (Array.of_list data) in
+    Eio_unix.Net.stream_addr_of_unix addr, n, fds
+
   method probe : type a. a Eio.Generic.ty -> a option = function
     | Eio_unix.Resource.FD -> Some fd
     | _ -> None

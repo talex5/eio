@@ -5,6 +5,7 @@ module Resource = Resource
 module Private = Private
 
 include Types
+type socket = Net.stream_socket
 
 let await_readable = Private.await_readable
 let await_writable = Private.await_writable
@@ -54,10 +55,7 @@ end
 let socketpair ~sw ?(domain=Unix.PF_UNIX) ?(ty=Unix.SOCK_STREAM) ?(protocol=0) () =
   Effect.perform (Private.Socketpair (sw, domain, ty, protocol))
 
-module Ipaddr = struct
-  let to_unix : _ Eio.Net.Ipaddr.t -> Unix.inet_addr = Obj.magic
-  let of_unix : Unix.inet_addr -> _ Eio.Net.Ipaddr.t = Obj.magic
-end
+module Ipaddr = Net.Ipaddr
 
 module Ctf = Ctf_unix
 
@@ -73,13 +71,14 @@ let getnameinfo (sockaddr : Eio.Net.Sockaddr.t) =
     (ni_hostname, ni_service))
 
 module Process = Process
+module Net = Net
 
 module Stdenv = struct
   type base = <
     stdin  : source;
     stdout : sink;
     stderr : sink;
-    net : Eio.Net.t;
+    net : Net.t;
     domain_mgr : Eio.Domain_manager.t;
     process_mgr : Process.mgr;
     clock : Eio.Time.clock;

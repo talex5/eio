@@ -45,13 +45,11 @@ let udp_socket sock = object
         let host = Eio_unix.Ipaddr.to_unix host in
         Unix.ADDR_INET (host, port)
     in
-    let sent = Err.run (Low_level.send_msg sock ~dst:addr) (Cstruct.to_bytes buf) in
+    let sent = Err.run (Low_level.send_msg sock ~dst:addr) [|buf|] in
     assert (sent = Cstruct.length buf)
 
   method recv buf =
-    let b = Bytes.create (Cstruct.length buf) in
-    let recv, addr = Err.run (Low_level.recv_msg sock) b in
-    Cstruct.blit_from_bytes b 0 buf 0 recv;
+    let addr, recv = Err.run (Low_level.recv_msg sock) [|buf|] in
     match addr with
     | Unix.ADDR_INET (inet, port) ->
       `Udp (Eio_unix.Ipaddr.of_unix inet, port), recv
@@ -127,7 +125,7 @@ let connect ~sw connect_addr =
   let sock = Low_level.socket ~sw (socket_domain_of connect_addr) socket_type 0 in
   try
     Low_level.connect sock addr;
-    (Flow.of_fd sock :> <Eio.Flow.two_way; Eio.Flow.close>)
+    (Flow.of_fd sock :> Eio_unix.socket)
   with Unix.Unix_error (code, name, arg) -> raise (Err.wrap code name arg)
 
 let datagram_socket ~reuse_addr ~reuse_port ~sw saddr =
@@ -148,10 +146,11 @@ let datagram_socket ~reuse_addr ~reuse_port ~sw saddr =
   udp_socket sock
 
 let v = object
-  inherit Eio.Net.t
+  inherit Eio_unix.Net.t
 
   method listen = listen
-  method connect = connect
+  method connect ~sw addr = (connect ~sw addr :> <Eio.Net.stream_socket; Eio.Flow.close>)
+  method connect_unix ~sw addr = connect ~sw addr
   method datagram_socket = datagram_socket
   method getaddrinfo = getaddrinfo
   method getnameinfo = Eio_unix.getnameinfo

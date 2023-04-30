@@ -31,9 +31,12 @@ module Resource : sig
       This just probes [t] using {!extension-FD}. *)
 end
 
+module Net = Net
+(** Extended network API with support for passing FDs. *)
+
 type source = < Eio.Flow.source;  Resource.t; Eio.Flow.close >
 type sink   = < Eio.Flow.sink;    Resource.t; Eio.Flow.close >
-type socket = < Eio.Flow.two_way; Resource.t; Eio.Flow.close >
+type socket = Net.stream_socket
 
 val await_readable : Unix.file_descr -> unit
 (** [await_readable fd] blocks until [fd] is readable (or has an error). *)
@@ -111,7 +114,7 @@ module Stdenv : sig
     stdin  : source;
     stdout : sink;
     stderr : sink;
-    net : Eio.Net.t;
+    net : Net.t;
     domain_mgr : Eio.Domain_manager.t;
     process_mgr : Process.mgr;
     clock : Eio.Time.clock;

@@ -176,6 +176,14 @@ let flow fd =
       | `Receive -> Unix.SHUTDOWN_RECEIVE
       | `Send -> Unix.SHUTDOWN_SEND
       | `All -> Unix.SHUTDOWN_ALL
+
+    method send_msg ?dst ~fds data =
+      let dst = Option.map Eio_unix.Net.stream_addr_to_unix dst in
+      Low_level.send_msg fd ~fds ?dst data
+
+    method recv_msg_with_fds ~sw ~max_fds data =
+      let addr, n, fds = Low_level.recv_msg_with_fds fd ~sw ~max_fds data in
+      Eio_unix.Net.stream_addr_of_unix (Uring.Sockaddr.get addr), n, fds
   end
 
 let source fd = (flow fd :> source)
@@ -211,26 +219,29 @@ let socket_domain_of = function
       ~v4:(fun _ -> Unix.PF_INET)
       ~v6:(fun _ -> Unix.PF_INET6)
 
+let connect ~sw connect_addr =
+  let addr = Eio_unix.Net.stream_addr_to_unix connect_addr in
+  let sock_unix = Unix.socket ~cloexec:true (socket_domain_of connect_addr) Unix.SOCK_STREAM 0 in
+  let sock = FD.of_unix ~sw ~seekable:false ~close_unix:true sock_unix in
+  Low_level.connect sock addr;
+  (flow sock :> <Eio_unix.socket>)
+
 let net = object
-  inherit Eio.Net.t
+  inherit Eio_unix.Net.t
 
   method listen ~reuse_addr ~reuse_port  ~backlog ~sw listen_addr =
-    let socket_type, addr =
+    if reuse_addr then (
       match listen_addr with
-      | `Unix path         ->
-        if reuse_addr then (
-          match Unix.lstat path with
-          | Unix.{ st_kind = S_SOCK; _ } -> Unix.unlink path
-          | _ -> ()
-          | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
-          | exception Unix.Unix_error (code, name, arg) -> raise @@ Err.wrap code name arg
-        );
-        Unix.SOCK_STREAM, Unix.ADDR_UNIX path
-      | `Tcp (host, port)  ->
-        let host = Eio_unix.Ipaddr.to_unix host in
-        Unix.SOCK_STREAM, Unix.ADDR_INET (host, port)
-    in
-    let sock_unix = Unix.socket ~cloexec:true (socket_domain_of listen_addr) socket_type 0 in
+      | `Tcp _ -> ()
+      | `Unix path ->
+        match Unix.lstat path with
+        | Unix.{ st_kind = S_SOCK; _ } -> Unix.unlink path
+        | _ -> ()
+        | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
+        | exception Unix.Unix_error (code, name, arg) -> raise @@ Err.wrap code name arg
+    );
+    let addr = Eio_unix.Net.stream_addr_to_unix listen_addr in
+    let sock_unix = Unix.socket ~cloexec:true (socket_domain_of listen_addr) Unix.SOCK_STREAM 0 in
     (* For Unix domain sockets, remove the path when done (except for abstract sockets). *)
     begin match listen_addr with
       | `Unix path ->
@@ -247,18 +258,8 @@ let net = object
     Unix.listen sock_unix backlog;
     listening_socket sock
 
-  method connect ~sw connect_addr =
-    let addr =
-      match connect_addr with
-      | `Unix path         -> Unix.ADDR_UNIX path
-      | `Tcp (host, port)  ->
-        let host = Eio_unix.Ipaddr.to_unix host in
-        Unix.ADDR_INET (host, port)
-    in
-    let sock_unix = Unix.socket ~cloexec:true (socket_domain_of connect_addr) Unix.SOCK_STREAM 0 in
-    let sock = FD.of_unix ~sw ~seekable:false ~close_unix:true sock_unix in
-    Low_level.connect sock addr;
-    (flow sock :> <Eio.Flow.two_way; Eio.Flow.close>)
+  method connect ~sw addr = (connect ~sw addr :> <Eio.Net.stream_socket; Eio.Flow.close>)
+  method connect_unix = connect
 
   method datagram_socket ~reuse_addr ~reuse_port ~sw saddr =
     let sock_unix = Unix.socket ~cloexec:true (socket_domain_of saddr) Unix.SOCK_DGRAM 0 in
