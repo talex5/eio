@@ -119,7 +119,7 @@ let rec enqueue_job t fn =
 
 (* Cancellations always come from the same domain, so no need to send wake events here. *)
 let rec enqueue_cancel job t =
-  Tracing.label "cancel";
+  Tracing.log "cancel";
   match enqueue_job t (fun () -> Uring.cancel t.uring job Cancel_job) with
   | None -> Queue.push (fun t -> enqueue_cancel job t) t.io_q
   | Some _ -> ()
@@ -162,7 +162,7 @@ let submit_pending_io st =
   match Queue.take_opt st.io_q with
   | None -> ()
   | Some fn ->
-    Tracing.label "submit_pending_io";
+    Tracing.log "submit_pending_io";
     fn st
 
 let rec submit_rw_req st ({op; file_offset; fd; buf; len; cur_off; action} as req) =
@@ -183,7 +183,7 @@ let rec submit_rw_req st ({op; file_offset; fd; buf; len; cur_off; action} as re
     )
   in
   if retry then (
-    Tracing.label "await-sqe";
+    Tracing.log "await-sqe";
     (* wait until an sqe is available *)
     Queue.push (fun st -> submit_rw_req st req) io_q
   )
@@ -338,7 +338,7 @@ let free_buf st buf =
   | Some k -> enqueue_thread st k buf
 
 let rec enqueue_poll_add fd poll_mask st action =
-  Tracing.label "poll_add";
+  Tracing.log "poll_add";
   let retry = with_cancel_hook ~action st (fun () ->
       Uring.poll_add st.uring fd poll_mask (Job action)
     )
@@ -347,7 +347,7 @@ let rec enqueue_poll_add fd poll_mask st action =
     Queue.push (fun st -> enqueue_poll_add fd poll_mask st action) st.io_q
 
 let rec enqueue_poll_add_unix fd poll_mask st action cb =
-  Tracing.label "poll_add";
+  Tracing.log "poll_add";
   let retry = with_cancel_hook ~action st (fun () ->
       Uring.poll_add st.uring fd poll_mask (Job_fn (action, cb))
     )
@@ -357,7 +357,7 @@ let rec enqueue_poll_add_unix fd poll_mask st action cb =
 
 let rec enqueue_readv args st action =
   let (file_offset,fd,bufs) = args in
-  Tracing.label "readv";
+  Tracing.log "readv";
   let retry = with_cancel_hook ~action st (fun () ->
       Uring.readv st.uring ~file_offset fd bufs (Job action))
   in
@@ -386,6 +386,7 @@ let monitor_event_fd t =
   assert false
 
 let run ~extra_effects st main arg =
+  Tracing.note_created ~label:"system thread" system_thread System_thread;
   let rec fork ~new_fiber:fiber fn =
     let open Effect.Deep in
     Tracing.note_switch (Fiber_context.tid fiber);
@@ -467,12 +468,15 @@ let run ~extra_effects st main arg =
   let result = ref None in
   let `Exit_scheduler =
     let new_fiber = Fiber_context.make_root () in
+    Tracing.note_name (Fiber_context.tid new_fiber) "root";
     Domain_local_await.using
       ~prepare_for_await:Eio.Private.Dla.prepare_for_await
       ~while_running:(fun () ->
         fork ~new_fiber (fun () ->
             Switch.run_protected (fun sw ->
-                Fiber.fork_daemon ~sw (fun () -> monitor_event_fd st);
+                Fiber.fork_daemon ~sw (fun () ->
+                  Eio.Private.Tracing.set_name "eio_linux.monitor_event_fd";
+                  monitor_event_fd st);
                 match main arg with
                 | x -> result := Some (Ok x)
                 | exception ex ->

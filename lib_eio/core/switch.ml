@@ -154,7 +154,7 @@ let run fn = Cancel.sub (fun cc -> run_internal (create cc) fn)
 
 let run_protected fn =
   let ctx = Effect.perform Cancel.Get_context in
-  Cancel.with_cc ~ctx ~parent:ctx.cancel_context ~protected:true @@ fun cancel ->
+  Cancel.with_cc ~ctx ~parent:ctx.cancel_context ~protected:true Switch @@ fun cancel ->
   run_internal (create cancel) fn
 
 (* Run [fn ()] in [t]'s cancellation context.

@@ -15,6 +15,7 @@ type state =
    If a function can succeed in a separate domain,
    the user's cancel function is responsible for ensuring that this is done atomically. *)
 type t = {
+  id : Tracing.id;
   mutable state : state;
   children : t Lwt_dllist.t;
   fibers : fiber_context Lwt_dllist.t;
@@ -85,31 +86,43 @@ let is_finished t =
 
 let move_fiber_to t fiber =
   let new_node = Lwt_dllist.add_r fiber t.fibers in     (* Add to new context *)
+  Tracing.note_parent ~child:fiber.tid ~parent:t.id;
   fiber.cancel_context <- t;
   Option.iter Lwt_dllist.remove fiber.cancel_node;      (* Remove from old context *)
   fiber.cancel_node <- Some new_node
 
 (* Note: the new value is not linked into the cancellation tree. *)
-let create ~protected =
+let create ~protected purpose =
   let children = Lwt_dllist.create () in
   let fibers = Lwt_dllist.create () in
-  { state = Finished; children; protected; fibers; domain = Domain.self () }
+  let id = Tracing.mint_id () in
+  Tracing.note_created id (Tracing.Cancellation_context {purpose; protected});
+  {
+    id;
+    state = Finished;
+    children;
+    protected;
+    fibers;
+    domain = Domain.self ()
+  }
 
 (* Links [t] into the tree as a child of [parent] and returns a function to remove it again. *)
 let activate t ~parent =
   assert (t.state = Finished);
   assert (parent.state <> Finished);
   t.state <- On;
+  Tracing.note_parent ~child:t.id ~parent:parent.id;
   let node = Lwt_dllist.add_r t parent.children in
   fun () ->
     assert (parent.state <> Finished);
     t.state <- Finished;
+    Tracing.note_resolved t.id ~ex:None;
     Lwt_dllist.remove node
 
 (* Runs [fn] with a fresh cancellation context. *)
-let with_cc ~ctx:fiber ~parent ~protected fn =
+let with_cc ~ctx:fiber ~parent ~protected purpose fn =
   if not protected then check parent;
-  let t = create ~protected in
+  let t = create ~protected purpose in
   let deactivate = activate t ~parent in
   move_fiber_to t fiber;
   let cleanup () = move_fiber_to parent fiber; deactivate () in
@@ -119,7 +132,7 @@ let with_cc ~ctx:fiber ~parent ~protected fn =
 
 let protect fn =
   let ctx = Effect.perform Get_context in
-  with_cc ~ctx ~parent:ctx.cancel_context ~protected:true @@ fun _ ->
+  with_cc ~ctx ~parent:ctx.cancel_context ~protected:true Protect @@ fun _ ->
   (* Note: there is no need to check the new context after [fn] returns;
      the goal of cancellation is only to finish the thread promptly, not to report the error.
      We also do not check the parent context, to make sure the caller has a chance to handle the result. *)
@@ -167,7 +180,7 @@ let cancel t ex =
 let sub fn =
   let ctx = Effect.perform Get_context in
   let parent = ctx.cancel_context in
-  with_cc ~ctx ~parent ~protected:false @@ fun t ->
+  with_cc ~ctx ~parent ~protected:false Sub @@ fun t ->
   fn t
 
 (* Like [sub], but it's OK if the new context is cancelled.
@@ -175,7 +188,7 @@ let sub fn =
 let sub_unchecked fn =
   let ctx = Effect.perform Get_context in
   let parent = ctx.cancel_context in
-  with_cc ~ctx ~parent ~protected:false @@ fun t ->
+  with_cc ~ctx ~parent ~protected:false Sub @@ fun t ->
   fn t;
   parent
 
@@ -196,12 +209,13 @@ module Fiber_context = struct
   let make ~cc ~vars =
     let tid = Tracing.mint_id () in
     Tracing.note_created tid Tracing.Task;
+    Tracing.note_parent ~child:tid ~parent:cc.id;
     let t = { tid; cancel_context = cc; cancel_node = None; cancel_fn = ignore; vars } in
     t.cancel_node <- Some (Lwt_dllist.add_r t cc.fibers);
     t
 
   let make_root () =
-    let cc = create ~protected:false in
+    let cc = create ~protected:false Root in
     cc.state <- On;
     make ~cc ~vars:Hmap.empty
 

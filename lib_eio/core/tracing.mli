@@ -1,40 +1,24 @@
-(** This library is used to write event traces in mirage-profile's CTF format. *)
-
 type id = private int
-(** Each thread/fiber/promise is identified by a unique ID. *)
 
-(** {2 Recording events}
-    Libraries and applications can use these functions to make the traces more useful. *)
+val mint_id : unit -> id
+(** [mint_id ()] is a fresh unique [id]. *)
 
-val label : string -> unit
-(** [label msg] attaches text [msg] to the current thread. *)
+type hiatus_reason = Wait_for_work
 
-val note_increase : string -> int -> unit
-(** [note_increase counter delta] records that [counter] increased by [delta].
-    If [delta] is negative, this records a decrease. *)
-
-val note_counter_value : string -> int -> unit
-(** [note_counter_value counter value] records that [counter] is now [value]. *)
-
-val should_resolve : id -> unit
-(** [should_resolve id] records that [id] is expected to resolve, and should be highlighted if it doesn't. *)
-
-(** {2 Recording system events}
-    These are normally only called by the scheduler. *)
-
-type hiatus_reason =
-  | Wait_for_work
-  | Suspend
-  | Hibernate
+type cancellation_context =
+  | Choose
+  | Pick
+  | Join
+  | Switch
+  | Protect
+  | Sub
+  | Root
 
 type event =
   | Wait
   | Task
   | Bind
   | Try
-  | Choose
-  | Pick
-  | Join
   | Map
   | Condition
   | On_success
@@ -48,13 +32,39 @@ type event =
   | Switch
   | Stream
   | Mutex
+  | Cancellation_context of {
+    purpose: cancellation_context;
+    protected: bool;
+  }
+  | System_thread
 (** Types of threads or other recorded objects. *)
 
-val mint_id : unit -> id
-(** [mint_id ()] is a fresh unique [id]. *)
+(** {2 Recording events}
+    Libraries and applications can use these functions to make the traces more useful. *)
+
+val log : string -> unit
+(** [log msg] attaches text [msg] to the current thread. *)
+
+val set_loc : string -> unit
+(** [set_loc msg] attaches location [msg] to the current thread. *)
+
+val set_name : string -> unit
+(** [set_name msg] attaches name [msg] to the current thread. *)
+
+(** {2 Recording system events}
+    These are normally only called by the scheduler. *)
 
 val note_created : ?label:string -> id -> event -> unit
 (** [note_created t id ty] records the creation of [id]. *)
+
+val note_loc : id -> string -> unit
+(** [note_loc msg] attaches location [msg] to [id]. *)
+
+val note_name : id -> string -> unit
+(** [note_name msg] attaches name [msg] to [id]. *)
+
+val note_parent : child:id -> parent:id -> unit
+(** [note_parent ~child ~parent] attaches [child] fiber to the given [parent] context. *)
 
 val note_read : ?reader:id -> id -> unit
 (** [note_read src] records that promise [src]'s value was read.
@@ -73,9 +83,6 @@ val note_resume : id -> unit
 (** [note_resume id] records that the system has resumed (used after {!note_hiatus}),
     and is now running [id]. *)
 
-val note_fork : unit -> id
-(** [note_fork ()] records that a new thread has been forked and returns a fresh ID for it. *)
-
 val note_resolved : id -> ex:exn option -> unit
 (** [note_resolved id ~ex] records that [id] is now resolved.
     If [ex = None] then [id] was successful, otherwise it failed with exception [ex]. *)
@@ -89,17 +96,27 @@ val note_signal : ?src:id -> id -> unit
 type log_buffer = (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
 module Control : sig
-  type t
+  (** Using runtime events (only available after OCaml 5.1) *)
 
-  val make : timestamper:(log_buffer -> int -> unit) -> log_buffer -> t
+  val start : unit -> unit
+  (** [start t] begins recording events in [t]. *)
+
+  val stop : unit -> unit
+  (** [stop t] stops recording to [t] (which must be the current trace buffer). *)
+
+  (** Common trace format *)
+
+  type ctf
+
+  val make : timestamper:(log_buffer -> int -> unit) -> log_buffer -> ctf
   (** [make ~timestamper b] is a trace buffer that record events in [b].
       In most cases, the {!Ctf_unix} module provides a simpler interface. *)
 
-  val start : t -> unit
-  (** [start t] begins recording events in [t]. *)
+  val start_ctf : ctf -> unit
+  (** [start_ctf t] begins recording events in [t]. *)
 
-  val stop : t -> unit
-  (** [stop t] stops recording to [t] (which must be the current trace buffer). *)
+  val stop_ctf : ctf -> unit
+  (** [stop_ctf t] stops recording to [t] (which must be the current trace buffer). *)
 end
 
 (**/**)

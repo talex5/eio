@@ -26,8 +26,6 @@ let run_in_systhread = Private.run_in_systhread
 
 module Ipaddr = Net.Ipaddr
 
-module Tracing = Ctf_unix
-
 module Process = Process
 module Net = Net
 module Pi = Pi
@@ -49,3 +47,5 @@ module Stdenv = struct
     backend_id: string;
   >
 end
+
+module Ctf = Ctf_unix

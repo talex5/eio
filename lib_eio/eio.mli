@@ -48,6 +48,12 @@ module Cancel = Eio__core.Cancel
 (** Commonly used standard features. This module is intended to be [open]ed. *)
 module Std = Std
 
+module Tracing : sig
+  val with_tracing : (unit -> 'a) -> 'a
+  (** [with_tracing fn] runs fn while enabling tracing
+      using runtime events. (available only after OCaml 5.1) *)
+end
+
 (** {1 Cross-platform OS API}
 
     The general pattern here is that each type of resource has a set of functions for using it,

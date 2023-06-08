@@ -17,5 +17,5 @@ let mmap_buffer ~size path =
 let with_tracing ?(size=0x100000) path fn =
   let buffer = mmap_buffer ~size path in
   let trace_config = Tracing.Control.make ~timestamper buffer in
-  Tracing.Control.start trace_config;
-  Fun.protect fn ~finally:(fun () -> Tracing.Control.stop trace_config)
+  Tracing.Control.start_ctf trace_config;
+  Fun.protect fn ~finally:(fun () -> Tracing.Control.stop_ctf trace_config)
