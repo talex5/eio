@@ -63,7 +63,7 @@ module Ipaddr : sig
   type v4v6 = [`V4 | `V6] t
 
   val fold :
-    v4:([> `V4] t -> 'a) -> 
+    v4:([> `V4] t -> 'a) ->
     v6:([> `V6] t -> 'a) ->
     [< `V4 | `V6] t ->
     'a
@@ -141,7 +141,7 @@ val with_tcp_connect :
   [> 'tag ty] r ->
   ('tag stream_socket_ty r -> 'b) ->
   'b
-(** [with_tcp_connect ~host ~service t f] creates a tcp connection [conn] to [host] and [service] and executes 
+(** [with_tcp_connect ~host ~service t f] creates a tcp connection [conn] to [host] and [service] and executes
     [f conn].
 
     [conn] is closed after [f] returns (if it isn't already closed by then).
@@ -184,6 +184,7 @@ val accept :
     If you want to handle multiple connections, consider using {!accept_fork} instead. *)
 
 val accept_fork :
+  ?loc:string ->
   sw:Switch.t ->
   [> 'tag listening_socket_ty] r ->
   on_error:(exn -> unit) ->
@@ -246,12 +247,12 @@ val datagram_socket :
   -> [> 'tag ty] r
   -> [< Sockaddr.datagram | `UdpV4 | `UdpV6]
   -> 'tag datagram_socket_ty r
-  (** [datagram_socket ~sw t addr] creates a new datagram socket bound to [addr]. The new 
-      socket will be closed when [sw] finishes. 
+  (** [datagram_socket ~sw t addr] creates a new datagram socket bound to [addr]. The new
+      socket will be closed when [sw] finishes.
 
       [`UdpV4] and [`UdpV6] represents IPv4 and IPv6
       datagram client sockets where the OS assigns the next available socket address and port
-      automatically. [`Udp ..] can be used to create both listening server socket and client 
+      automatically. [`Udp ..] can be used to create both listening server socket and client
       socket.
 
       @param reuse_addr Set the {!Unix.SO_REUSEADDR} socket option.
@@ -263,7 +264,7 @@ val send : _ datagram_socket -> ?dst:Sockaddr.datagram -> Cstruct.t list -> unit
     @param dst If [sock] isn't connected, this provides the destination. *)
 
 val recv : _ datagram_socket -> Cstruct.t -> Sockaddr.datagram * int
-(** [recv sock buf] receives data from the socket [sock] putting it in [buf]. The number of bytes received is 
+(** [recv sock buf] receives data from the socket [sock] putting it in [buf]. The number of bytes received is
     returned along with the sender address and port. If the [buf] is too small then excess bytes may be discarded
     depending on the type of the socket the message is received from. *)
 

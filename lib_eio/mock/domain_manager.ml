@@ -14,7 +14,7 @@ module Fake_domain_mgr = struct
 
   let create () = { next_domain_id = 1 }
 
-  let run t fn =
+  let run t ?loc:_ fn =
     let self = t.next_domain_id in
     t.next_domain_id <- t.next_domain_id + 1;
     let cancelled, _ = Promise.create () in

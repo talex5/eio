@@ -69,7 +69,6 @@ module Ipaddr = struct
         let elide = min elide zeros in
         let parts = if zeros = 0 then acc else zeros :: acc in
         ((if elide < -1 then Some elide else None), List.rev parts)
-          
       in
       loop 0 0 [] t
 
@@ -260,12 +259,12 @@ let accept ~sw (type tag) (Resource.T (t, ops) : [> tag listening_socket_ty] r) 
   let module X = (val (Resource.get ops Pi.Listening_socket)) in
   X.accept t ~sw
 
-let accept_fork ~sw (t : [> 'a listening_socket_ty] r) ~on_error handle =
+let accept_fork ?loc ~sw (t : [> 'a listening_socket_ty] r) ~on_error handle =
   let child_started = ref false in
   let flow, addr = accept ~sw t in
   Fun.protect ~finally:(fun () -> if !child_started = false then Flow.close flow)
     (fun () ->
-       Fiber.fork ~sw (fun () ->
+       Fiber.fork ?loc ~sw (fun () ->
            match child_started := true; handle (flow :> 'a stream_socket_ty r) addr with
            | x -> Flow.close flow; x
            | exception (Cancel.Cancelled _ as ex) ->
@@ -301,7 +300,7 @@ let connect (type tag) ~sw (t:[> tag ty] r) addr =
 let datagram_socket (type tag) ?(reuse_addr=false) ?(reuse_port=false) ~sw (t:[> tag ty] r) addr =
   let (Resource.T (t, ops)) = t in
   let module X = (val (Resource.get ops Pi.Network)) in
-  let addr = (addr :> [Sockaddr.datagram | `UdpV4 | `UdpV6]) in 
+  let addr = (addr :> [Sockaddr.datagram | `UdpV4 | `UdpV6]) in
   X.datagram_socket t ~reuse_addr ~reuse_port ~sw addr
 
 let getaddrinfo (type tag) ?(service="") (t:[> tag ty] r) hostname =
@@ -367,7 +366,7 @@ let run_server_loop ~connections ~on_error ~stop listening_socket connection_han
   in
   match stop with
   | None -> accept ()
-  | Some stop -> Fiber.first accept (fun () -> Promise.await stop)
+  | Some stop -> Fiber.first ~loc:"run_server_loop" accept (fun () -> Promise.await stop)
 
 let run_server ?(max_connections=Int.max_int) ?(additional_domains) ?stop ~on_error listening_socket connection_handler : 'a =
   if max_connections <= 0 then invalid_arg "max_connections";
