@@ -5,5 +5,5 @@ module Ctf = Eio.Private.Ctf
 
 let () =
   let bs = Cstruct.create 8 in
-  Ctf.BS.set_int64_le bs.buffer 0 1234L;
+  Cstruct.LE.set_uint64 bs 0 1234L;
   assert (Cstruct.LE.get_uint64 bs 0 = 1234L)

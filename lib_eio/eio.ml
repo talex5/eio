@@ -23,6 +23,12 @@ module File = File
 module Fs = Fs
 module Path = Path
 
+module Ctf = struct
+  let with_tracing fn =
+    Ctf.Control.start ();
+    Fun.protect ~finally:Ctf.Control.stop fn
+end
+
 module Stdenv = struct
   let stdin  (t : <stdin  : _ Flow.source; ..>) = t#stdin
   let stdout (t : <stdout : _ Flow.sink;   ..>) = t#stdout
