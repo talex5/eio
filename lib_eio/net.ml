@@ -259,12 +259,12 @@ let accept ~sw (type tag) (Resource.T (t, ops) : [> tag listening_socket_ty] r) 
   let module X = (val (Resource.get ops Pi.Listening_socket)) in
   X.accept t ~sw
 
-let accept_fork ?loc ~sw (t : [> 'a listening_socket_ty] r) ~on_error handle =
+let accept_fork ?(loc = Ctf.get_caller ()) ~sw (t : [> 'a listening_socket_ty] r) ~on_error handle =
   let child_started = ref false in
   let flow, addr = accept ~sw t in
   Fun.protect ~finally:(fun () -> if !child_started = false then Flow.close flow)
     (fun () ->
-       Fiber.fork ?loc ~sw (fun () ->
+       Fiber.fork ~loc ~sw (fun () ->
            match child_started := true; handle (flow :> 'a stream_socket_ty r) addr with
            | x -> Flow.close flow; x
            | exception (Cancel.Cancelled _ as ex) ->

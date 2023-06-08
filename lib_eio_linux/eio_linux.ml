@@ -388,7 +388,7 @@ let unwrap_backtrace = function
 
 module Domain_mgr = struct
   type t = {
-    run_event_loop : ?loc:string -> (unit -> unit) -> unit -> unit;
+    run_event_loop : loc:string -> (unit -> unit) -> unit -> unit;
   }
 
   let make ~run_event_loop = { run_event_loop }
@@ -400,7 +400,7 @@ module Domain_mgr = struct
       );
     unwrap_backtrace (Domain.join (Option.get !domain))
 
-  let run t ?loc fn =
+  let run t ?(loc = Ctf.get_caller ()) fn =
     let domain = ref None in
     Sched.enter (fun sched k ->
         let cancelled, set_cancelled = Promise.create () in
@@ -410,7 +410,7 @@ module Domain_mgr = struct
               (fun () ->
                  let result = ref None in
                  let fn = wrap_backtrace (fun () -> fn ~cancelled) in
-                 t.run_event_loop ?loc (fun () -> result := Some (fn ())) ();
+                 t.run_event_loop ~loc (fun () -> result := Some (fn ())) ();
                  Option.get !result
               )
               ~finally:(fun () -> Sched.enqueue_thread sched k ())))
@@ -582,7 +582,7 @@ let stdenv ~run_event_loop =
     method backend_id = "linux"
   end
 
-let run_event_loop ?loc (type a) ?fallback config (main : _ -> a) arg : a =
+let run_event_loop ~loc (type a) ?fallback config (main : _ -> a) arg : a =
   Sched.with_sched ?fallback config @@ fun st ->
   let open Effect.Deep in
   let extra_effects : _ effect_handler = {
@@ -632,11 +632,11 @@ let run_event_loop ?loc (type a) ?fallback config (main : _ -> a) arg : a =
         )
       | _ -> None
   } in
-  Sched.run ?loc ~extra_effects st main arg
+  Sched.run ~loc ~extra_effects st main arg
 
-let run ?loc ?queue_depth ?n_blocks ?block_size ?polling_timeout ?fallback main =
+let run ?(loc=Eio.Private.Ctf.get_caller ()) ?queue_depth ?n_blocks ?block_size ?polling_timeout ?fallback main =
   let config = Sched.config ?queue_depth ?n_blocks ?block_size ?polling_timeout () in
-  let stdenv = stdenv ~run_event_loop:(fun ?loc -> run_event_loop ?loc ?fallback:None config) in
+  let stdenv = stdenv ~run_event_loop:(run_event_loop ?fallback:None config) in
   (* SIGPIPE makes no sense in a modern application. *)
   Sys.(set_signal sigpipe Signal_ignore);
-  run_event_loop ?loc ?fallback config main stdenv
+  run_event_loop ~loc ?fallback config main stdenv
