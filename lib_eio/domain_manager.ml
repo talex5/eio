@@ -21,14 +21,14 @@ let run_raw (Resource.T (t, ops)) fn =
   let module X = (val (Resource.get ops Pi.Mgr)) in
   X.run_raw t fn
 
-let run ?(loc = Ctf.get_caller ()) (Resource.T (t, ops)) fn =
+let run ?(loc = Tracing.get_caller ()) (Resource.T (t, ops)) fn =
   let module X = (val (Resource.get ops Pi.Mgr)) in
   X.run t ~loc @@ fun ~cancelled ->
   (* If the spawning fiber is cancelled, [cancelled] gets set to the exception. *)
   try
     Fiber.first ~loc
       (fun () ->
-        Ctf.set_name "eio.domain_mgr cancel thread";
+        Tracing.set_name "eio.domain_mgr cancel thread";
         match Promise.await cancelled with
         | Cancel.Cancelled ex -> raise ex    (* To avoid [Cancelled (Cancelled ex))] *)
         | ex -> raise ex (* Shouldn't happen *)

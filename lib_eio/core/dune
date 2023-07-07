@@ -1,5 +1,4 @@
 (library
   (name eio__core)
   (public_name eio.core)
-  (libraries astring cstruct hmap lwt-dllist fmt optint domain-local-await
-    eio.runtime_events))
+  (libraries astring cstruct hmap lwt-dllist fmt optint domain-local-await eio.runtime_events))
