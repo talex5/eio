@@ -45,6 +45,9 @@ module Pool = Pool
 (** Cancelling fibers. *)
 module Cancel = Eio__core.Cancel
 
+(** A high-level domain task pool *)
+module Executor_pool = Executor_pool
+
 (** Commonly used standard features. This module is intended to be [open]ed. *)
 module Std = Std
 
