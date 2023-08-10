@@ -520,6 +520,7 @@ Unconfined:
 ```
 
 # Stat
+
 ```ocaml
 # run @@ fun env ->
   let cwd = Eio.Stdenv.cwd env in
@@ -530,6 +531,17 @@ Unconfined:
   assert_kind (cwd / "stat_reg") `Regular_file;;
 +mkdir <cwd:stat_subdir> -> ok
 +write <cwd:stat_reg> -> ok
+- : unit = ()
+```
+
+Fstatat:
+
+```ocaml
+# run @@ fun env ->
+  let cwd = Eio.Stdenv.cwd env in
+  Switch.run @@ fun sw ->
+  try_mkdir (cwd / "stat_subdir2");
+  Eio.Path.stat ~follow:true (cwd / "stat_subdir2");;
 - : unit = ()
 ```
 

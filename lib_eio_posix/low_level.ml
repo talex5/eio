@@ -228,6 +228,43 @@ let rename ?old_dir old_path ?new_dir new_path =
   in_worker_thread @@ fun () ->
   eio_renameat old_dir old_path new_dir new_path
 
+module Stat = struct
+  type kind = [
+    | `Unknown
+    | `Fifo
+    | `Character_special
+    | `Directory
+    | `Block_device
+    | `Regular_file
+    | `Symbolic_link
+    | `Socket
+  ]
+
+  (* Has to match the C stubs. *)
+  type t = Eio.File.Stat.t = {
+    dev : Int64.t;
+    ino : Int64.t;
+    kind : kind;
+    perm : int;
+    nlink : Int64.t;
+    uid : Int64.t;
+    gid : Int64.t;
+    rdev : Int64.t;
+    size : Optint.Int63.t;
+    atime : float;
+    mtime : float;
+    ctime : float;
+  }
+end
+
+external eio_fstatat : Unix.file_descr -> string -> int -> Stat.t = "caml_eio_posix_fstatat"
+
+let fstatat ?dirfd ~follow path =
+  in_worker_thread @@ fun () ->
+  let flags = if follow then 0 else Config.at_symlink_nofollow in
+  with_dirfd "fstatat" dirfd @@ fun dirfd ->
+  eio_fstatat dirfd path flags
+
 let pipe ~sw =
   let unix_r, unix_w = Unix.pipe ~cloexec:true () in
   let r = Fd.of_unix ~sw ~blocking:false ~close_unix:true unix_r in

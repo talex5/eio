@@ -486,6 +486,8 @@ end = struct
   let unlink t path = Low_level.unlink ~rmdir:false t.fd path
   let rmdir t path = Low_level.unlink ~rmdir:true t.fd path
 
+  let stat _t ~follow:_ _path = failwith "TODO"
+
   let rename t old_path t2 new_path =
     match get_dir_fd_opt t2 with
     | Some fd2 -> Low_level.rename t.fd old_path fd2 new_path
