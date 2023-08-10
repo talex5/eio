@@ -36,7 +36,8 @@ val send_msg : fd -> ?fds:fd list -> ?dst:Unix.sockaddr -> Cstruct.t array -> in
 val getrandom : Cstruct.t -> unit
 
 val fstat : fd -> Unix.LargeFile.stats
-val lstat : string -> Unix.LargeFile.stats
+val lstat : string -> Unix.LargeFile.stats                      (* TODO: remove? *)
+val fstatat : ?dirfd:fd -> follow:bool -> string -> Eio.File.Stat.t
 
 val realpath : string -> string
 

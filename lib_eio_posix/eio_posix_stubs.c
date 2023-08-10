@@ -27,8 +27,10 @@
 
 #ifdef ARCH_SIXTYFOUR
 #define Int63_val(v) Long_val(v)
+#define caml_copy_int63(v) Val_long(v)
 #else
 #define Int63_val(v) (Int64_val(v)) >> 1
+#define caml_copy_int63(v) caml_copy_int64(v << 1)
 #endif
 
 static void caml_stat_free_preserving_errno(void *ptr) {
@@ -159,6 +161,68 @@ CAMLprim value caml_eio_posix_mkdirat(value v_fd, value v_path, value v_perm) {
   caml_stat_free_preserving_errno(path);
   if (ret == -1) uerror("mkdirat", v_path);
   CAMLreturn(Val_unit);
+}
+
+static double double_of_timespec(struct timespec *t) {
+  return ((double) t->tv_sec) + (((double ) t->tv_nsec) / 1e9);
+}
+
+static value get_file_type_variant(struct stat sb) {
+  int filetype = sb.st_mode & S_IFMT;
+  if (filetype == S_IFREG) {
+    return caml_hash_variant("Regular_file");
+  } else if (filetype == S_IFSOCK) {
+    return caml_hash_variant("Socket");
+  } else if (filetype == S_IFLNK) {
+    return caml_hash_variant("Symbolic_link");
+  } else if (filetype == S_IFBLK) {
+    return caml_hash_variant("Block_device");
+  } else if (filetype == S_IFDIR) {
+    return caml_hash_variant("Directory");
+  } else if (filetype == S_IFCHR) {
+    return caml_hash_variant("Character_special");
+  } else if (filetype == S_IFIFO) {
+    return caml_hash_variant("Fifo");
+  } else {
+    return caml_hash_variant("Unknown");
+  }
+}
+
+CAMLprim value caml_eio_posix_fstatat(value v_fd, value v_path, value v_flags) {
+  CAMLparam1(v_path);
+  CAMLlocal1(v_ret);
+  char *path;
+  int ret;
+  struct stat statbuf;
+
+  caml_unix_check_path(v_path, "fstatat");
+  path = caml_stat_strdup(String_val(v_path));
+  caml_enter_blocking_section();
+  ret = fstatat(Int_val(v_fd), path, &statbuf, Int_val(v_flags));
+  caml_leave_blocking_section();
+  caml_stat_free_preserving_errno(path);
+  if (ret == -1) uerror("fstatat", v_path);
+
+  v_ret = caml_alloc(12, 0);
+  Store_field(v_ret, 0, caml_copy_int64(statbuf.st_dev));
+  Store_field(v_ret, 1, caml_copy_int64(statbuf.st_ino));
+  Store_field(v_ret, 2, get_file_type_variant(statbuf));
+  Store_field(v_ret, 3, Val_int(statbuf.st_mode & ~S_IFMT));
+  Store_field(v_ret, 4, caml_copy_int64(statbuf.st_nlink));
+  Store_field(v_ret, 5, caml_copy_int64(statbuf.st_uid));
+  Store_field(v_ret, 6, caml_copy_int64(statbuf.st_gid));
+  Store_field(v_ret, 7, caml_copy_int64(statbuf.st_rdev));
+  Store_field(v_ret, 8, caml_copy_int63(statbuf.st_size));
+  #ifdef __APPLE__
+  Store_field(v_ret, 9, caml_copy_double(double_of_timespec(&statbuf.st_atimespec)));
+  Store_field(v_ret, 10, caml_copy_double(double_of_timespec(&statbuf.st_mtimespec)));
+  Store_field(v_ret, 11, caml_copy_double(double_of_timespec(&statbuf.st_ctimespec)));
+  #else
+  Store_field(v_ret, 9, caml_copy_double(double_of_timespec(&statbuf.st_atim)));
+  Store_field(v_ret, 10, caml_copy_double(double_of_timespec(&statbuf.st_mtim)));
+  Store_field(v_ret, 11, caml_copy_double(double_of_timespec(&statbuf.st_ctim)));
+  #endif
+  CAMLreturn(v_ret);
 }
 
 CAMLprim value caml_eio_posix_unlinkat(value v_fd, value v_path, value v_dir) {

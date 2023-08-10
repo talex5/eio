@@ -520,6 +520,7 @@ Unconfined:
 ```
 
 # Stat
+
 ```ocaml
 # run @@ fun env ->
   let cwd = Eio.Stdenv.cwd env in
@@ -531,6 +532,19 @@ Unconfined:
 +mkdir <cwd:stat_subdir> -> ok
 +write <cwd:stat_reg> -> ok
 - : unit = ()
+```
+
+Fstatat:
+
+```ocaml
+# run @@ fun env ->
+  let cwd = Eio.Stdenv.cwd env in
+  Switch.run @@ fun sw ->
+  try_mkdir (cwd / "stat_subdir2");
+  let s = Eio.Path.stat ~follow:true (cwd / "stat_subdir2") in
+  s.kind
++mkdir <cwd:stat_subdir2> -> ok
+- : Eio.File.Stat.kind = `Directory
 ```
 
 # pread/pwrite
