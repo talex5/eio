@@ -526,7 +526,25 @@ end = struct
   let unlink t path = Low_level.unlink ~rmdir:false t.fd path
   let rmdir t path = Low_level.unlink ~rmdir:true t.fd path
 
-  let stat _t ~follow:_ _path = failwith "TODO"
+  let stat t ~follow path =
+    let flags = 
+      if follow then Uring.Statx.Flags.empty_path else Uring.Statx.Flags.(empty_path + symlink_nofollow)
+    in
+    let statx = Low_level.statx t.fd path flags in
+    Eio.File.Stat.{
+      dev = statx.dev;
+      rdev = statx.rdev;
+      ino = statx.ino;
+      kind = statx.kind;
+      perm = statx.perm;
+      nlink = statx.nlink;
+      uid = statx.uid;
+      gid = statx.gid;
+      size = statx.size;
+      atime = statx.atime;
+      mtime = statx.mtime;
+      ctime = statx.ctime;
+    }
 
   let rename t old_path t2 new_path =
     match get_dir_fd_opt t2 with

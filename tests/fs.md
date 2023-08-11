@@ -541,8 +541,10 @@ Fstatat:
   let cwd = Eio.Stdenv.cwd env in
   Switch.run @@ fun sw ->
   try_mkdir (cwd / "stat_subdir2");
-  Eio.Path.stat ~follow:true (cwd / "stat_subdir2");;
-- : unit = ()
+  let s = Eio.Path.stat ~follow:true (cwd / "stat_subdir2") in
+  s.kind
++mkdir <cwd:stat_subdir2> -> ok
+- : Eio.File.Stat.kind = `Directory
 ```
 
 # pread/pwrite

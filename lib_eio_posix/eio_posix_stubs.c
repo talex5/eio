@@ -167,6 +167,27 @@ static double double_of_timespec(struct timespec *t) {
   return ((double) t->tv_sec) + (((double ) t->tv_nsec) / 1e9);
 }
 
+static value get_file_type_variant(struct stat sb) {
+  int filetype = sb.st_mode & S_IFMT;
+  if (filetype == S_IFREG) {
+    return caml_hash_variant("Regular_file");
+  } else if (filetype == S_IFSOCK) {
+    return caml_hash_variant("Socket");
+  } else if (filetype == S_IFLNK) {
+    return caml_hash_variant("Symbolic_link");
+  } else if (filetype == S_IFBLK) {
+    return caml_hash_variant("Block_device");
+  } else if (filetype == S_IFDIR) {
+    return caml_hash_variant("Directory");
+  } else if (filetype == S_IFCHR) {
+    return caml_hash_variant("Character_special");
+  } else if (filetype == S_IFIFO) {
+    return caml_hash_variant("Fifo");
+  } else {
+    return caml_hash_variant("Unknown");
+  }
+}
+
 CAMLprim value caml_eio_posix_fstatat(value v_fd, value v_path, value v_flags) {
   CAMLparam1(v_path);
   CAMLlocal1(v_ret);
@@ -185,7 +206,7 @@ CAMLprim value caml_eio_posix_fstatat(value v_fd, value v_path, value v_flags) {
   v_ret = caml_alloc_small(12, 0);
   Store_field(v_ret, 0, caml_copy_int64(statbuf.st_dev));
   Store_field(v_ret, 1, caml_copy_int64(statbuf.st_ino));
-  Store_field(v_ret, 2, caml_hash_variant("Unknown"));	// TODO
+  Store_field(v_ret, 2, get_file_type_variant(statbuf));
   Store_field(v_ret, 3, Val_int(statbuf.st_mode & ~S_IFMT));
   Store_field(v_ret, 4, caml_copy_int64(statbuf.st_nlink));
   Store_field(v_ret, 5, caml_copy_int64(statbuf.st_uid));

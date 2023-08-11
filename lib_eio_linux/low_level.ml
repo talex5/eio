@@ -56,6 +56,15 @@ let rec enqueue_openat2 ((access, flags, perm, resolve, fd, path) as args) st ac
   if retry then (* wait until an sqe is available *)
     Queue.push (fun st -> enqueue_openat2 args st action) st.io_q
 
+let rec enqueue_statx ((fd, path, statx, flags) as args) st action =
+  Ctf.label "statx";
+  let retry = Sched.with_cancel_hook ~action st (fun () ->
+      Uring.statx st.uring ?fd path statx flags (Job action)
+    )
+  in
+  if retry then (* wait until an sqe is available *)
+    Queue.push (fun st -> enqueue_statx args st action) st.io_q
+
 let rec enqueue_unlink ((dir, fd, path) as args) st action =
   Ctf.label "unlinkat";
   let retry = Sched.with_cancel_hook ~action st (fun () ->
@@ -365,6 +374,17 @@ let mkdir_beneath ~perm dir path =
   with_parent_dir "mkdir" dir path @@ fun parent leaf ->
   try eio_mkdirat parent leaf perm
   with Unix.Unix_error (code, name, arg) -> raise @@ Err.wrap_fs code name arg
+
+let statx fd path flags =
+  let statx = Uring.Statx.create () in
+  let res = match fd with
+    | FD fd -> 
+      Fd.use_exn "statx" fd @@ fun fd ->
+      Sched.enter (enqueue_statx (Some fd, path, statx, flags))
+    | Cwd | Fs -> Sched.enter (enqueue_statx (None, path, statx, flags)) 
+  in
+  if res <> 0 then raise @@ Err.wrap_fs (Uring.error_of_errno res) "statx" "";
+  Uring.Statx.internal_to_t statx
 
 let unlink ~rmdir dir path =
   (* [unlink] is really an operation on [path]'s parent. Get a reference to that first: *)
