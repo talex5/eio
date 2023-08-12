@@ -213,10 +213,15 @@ CAMLprim value caml_eio_posix_fstatat(value v_fd, value v_path, value v_flags) {
   Store_field(v_ret, 6, caml_copy_int64(statbuf.st_gid));
   Store_field(v_ret, 7, caml_copy_int64(statbuf.st_rdev));
   Store_field(v_ret, 8, caml_copy_int63(statbuf.st_size));
+  #ifdef __APPLE__
+  Store_field(v_ret, 9, caml_copy_double(double_of_timespec(&statbuf.st_atimespec)));
+  Store_field(v_ret, 10, caml_copy_double(double_of_timespec(&statbuf.st_mtimespec)));
+  Store_field(v_ret, 11, caml_copy_double(double_of_timespec(&statbuf.st_ctimespec)));
+  #else
   Store_field(v_ret, 9, caml_copy_double(double_of_timespec(&statbuf.st_atim)));
   Store_field(v_ret, 10, caml_copy_double(double_of_timespec(&statbuf.st_mtim)));
   Store_field(v_ret, 11, caml_copy_double(double_of_timespec(&statbuf.st_ctim)));
-
+  #endif
   CAMLreturn(v_ret);
 }
 
