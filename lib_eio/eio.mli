@@ -36,6 +36,9 @@ module Condition = Condition
 (** A stream/queue. *)
 module Stream = Stream
 
+(** A pool of resources. *)
+module Pool = Pool
+
 (** Cancelling fibers. *)
 module Cancel = Eio__core.Cancel
 
