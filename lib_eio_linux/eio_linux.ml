@@ -488,9 +488,9 @@ end = struct
 
   let stat t ~follow path =
     let flags = 
-      if follow then Uring.Statx.Flags.empty_path else Uring.Statx.Flags.(empty_path + symlink_nofollow)
+      if follow then Uring.Statx.Flags.empty else Uring.Statx.Flags.(empty + symlink_nofollow)
     in
-    let statx = Low_level.statx t.fd path flags in
+    let statx = Low_level.statx ~mask:Uring.Statx.Mask.basic_stats t.fd path flags in
     Eio.File.Stat.{
       dev = statx.dev;
       rdev = statx.rdev;
