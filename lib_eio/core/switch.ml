@@ -53,11 +53,7 @@ let fail ?(bt=Printexc.get_raw_backtrace ()) t ex =
   if t.exs = None then
     Ctf.note_resolved t.id ~ex:(Some ex);
   t.exs <- Some (combine_exn (ex, bt) t.exs);
-  try
-    Cancel.cancel t.cancel ex
-  with Exn.Cancel_hook_failed _ as ex ->
-    let bt = Printexc.get_raw_backtrace () in
-    t.exs <- Some (combine_exn (ex, bt) t.exs)
+  Cancel.cancel t.cancel ex
 
 let inc_fibers t =
   check t;

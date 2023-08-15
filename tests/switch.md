@@ -414,3 +414,27 @@ Multiple exceptions:
 - Failure("simulated error")
 - Failure("cleanup failed")
 ```
+
+# Cancel hooks fail
+
+```ocaml
+# run (fun sw ->
+    Fiber.all [
+       (fun () ->
+          Eio.Private.Suspend.enter (fun ctx enqueue ->
+            Eio.Private.Fiber_context.set_cancel_fn ctx (fun _ -> failwith "Cancel A error")
+          )
+       );
+       (fun () ->
+          Eio.Private.Suspend.enter (fun ctx enqueue ->
+            Eio.Private.Fiber_context.set_cancel_fn ctx (fun _ -> failwith "Cancel B error")
+          )
+       );
+       (fun () -> failwith "Original error");
+    ]
+  );
+Exception:
+Multiple exceptions:
+- Failure("Cancel A error")
+- Failure("Cancel B error")
+```
