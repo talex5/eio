@@ -158,41 +158,30 @@ let rename t1 t2 =
     let bt = Printexc.get_raw_backtrace () in
     Exn.reraise_with_context ex bt "renaming %a to %a" pp t1 pp t2
 
-(* TODO: An exists function that doesn't need to open the file
-   but that is still capability-like ? *)
-let exists path =
-  try
-    with_open_in path @@ fun _ -> true
-  with
-  | Exn.Io ((Fs.E Fs.Not_found _), _) -> false
+let exists ~follow path =
+(*   try ignore (stat ~follow path : File.Stat.t); true *)
+  assert follow;
+  try with_open_in path @@ fun _ -> true
+  with Exn.Io (Fs.E Not_found _, _) -> false
 
-let mkdirs ?(exists_ok=false) ~perm ((t:#Fs.dir), path) =
-  let rec loop name =
+let rec mkdirs ?(exists_ok=false) ~perm (dir, name) =
+  match
     let parent, child =
       match split_last_seg name with
       | (Some _ as p), (Some _ as c) -> p, c
       | Some parent, None -> split_last_seg parent
       | None, _ -> None, None
     in
-    let () =
-      match parent, child with
-      | Some parent, Some _ -> (
-        try
-          if not (exists (t, parent)) then loop parent
-        with
-        | Exn.Io ((Fs.E Fs.Permission_denied _), _) as exn ->
-          let bt = Printexc.get_raw_backtrace () in
-          Exn.reraise_with_context exn bt "whilst creating directory %a" pp (t, path)
+    match parent, child with
+    | Some parent, Some _ -> (
+        let parent = (dir, parent) in
+        if not (exists ~follow:false parent) then mkdirs ~exists_ok:true ~perm parent
       )
-      | _ -> ()
-    in
-    try t#mkdir ~perm name with
-    | Exn.Io ((Fs.E Fs.Already_exists _), _) as exn ->
-      if not exists_ok then
-        let bt = Printexc.get_raw_backtrace () in
-        Exn.reraise_with_context exn bt "creating directory %a" pp (t, path)
-    | exn ->
-      let bt = Printexc.get_raw_backtrace () in
-      Exn.reraise_with_context exn bt "creating directory %a" pp (t, path)
-  in
-  loop path
+    | _ -> ()
+  with
+  | exception (Exn.Io _ as ex) ->
+    let bt = Printexc.get_raw_backtrace () in
+    Exn.reraise_with_context ex bt "creating directory %a" pp (dir, name)
+  | () ->
+    try mkdir (dir, name) ~perm
+    with Exn.Io ((Fs.E Fs.Already_exists _), _) when exists_ok -> ()

@@ -237,7 +237,7 @@ Recursively creating directories with `mkdirs`.
 +mkdirs <cwd:subdir1/subdir2/subdir3/subdir4> -> ok
 +mkdirs <cwd:subdir1/subdir2/subdir3/subdir4> -> ok
 +Eio.Io Fs Already_exists _, creating directory <cwd:subdir1/subdir2/subdir3/subdir4>
-+Eio.Io Fs Permission_denied _, opening <cwd:..>, whilst creating directory <cwd:../outside>
++Eio.Io Fs Permission_denied _, creating directory <cwd:../outside>
 - : unit = ()
 ```
 
@@ -255,7 +255,7 @@ Some edge cases for `mkdirs`.
 +Eio.Io Fs Already_exists _, creating directory <cwd:.>
 +Eio.Io Fs Already_exists _, creating directory <cwd:././>
 +mkdirs <cwd:./test//////////////test> -> ok
-+Eio.Io Fs Permission_denied _, creating directory <cwd:..>
++Eio.Io Fs Already_exists _, creating directory <cwd:..>
 - : unit = ()
 ```
 
