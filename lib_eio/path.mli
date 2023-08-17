@@ -34,6 +34,8 @@ open Fs
 type 'a t = 'a Fs.dir * path
 (** An OS directory FD and a path relative to it, for use with e.g. [openat(2)]. *)
 
+type rw = Fs.dir_ty t
+
 val ( / ) : 'a t -> string -> 'a t
 (** [t / step] is [t] with [step] appended to [t]'s path,
     or replacing [t]'s path if [step] is absolute:

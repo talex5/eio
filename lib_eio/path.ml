@@ -1,5 +1,7 @@
 type 'a t = 'a Fs.dir * Fs.path
 
+type rw = Fs.dir_ty t
+
 let ( / ) (dir, p1) p2 =
   match p1, p2 with
   | p1, "" -> (dir, Filename.concat p1 p2)
