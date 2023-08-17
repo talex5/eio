@@ -375,16 +375,32 @@ let mkdir_beneath ~perm dir path =
   try eio_mkdirat parent leaf perm
   with Unix.Unix_error (code, name, arg) -> raise @@ Err.wrap_fs code name arg
 
+let float_of_time (s, ns) = Int64.to_float s +. (float ns /. 1e9)
+
 let statx ~mask fd path flags =
-  let statx = Uring.Statx.create () in
+  let x = Uring.Statx.create () in
   let res = match fd with
     | FD fd -> 
       Fd.use_exn "statx" fd @@ fun fd ->
-      Sched.enter (enqueue_statx (Some fd, path, statx, flags, mask))
-    | Cwd | Fs -> Sched.enter (enqueue_statx (None, path, statx, flags, mask)) 
+      Sched.enter (enqueue_statx (Some fd, path, x, flags, mask))
+    | Cwd | Fs -> Sched.enter (enqueue_statx (None, path, x, flags, mask)) 
   in
   if res <> 0 then raise @@ Err.wrap_fs (Uring.error_of_errno res) "statx" "";
-  Uring.Statx.internal_to_t statx
+  let module S = Uring.Statx in
+  { Eio.File.Stat.
+    dev = S.dev x;
+    ino = S.ino x;
+    kind = S.kind x;
+    perm = S.perm x;
+    nlink = S.nlink x;
+    uid = S.uid x;
+    gid = S.gid x;
+    rdev = S.rdev x;
+    size = Optint.Int63.of_int64 (S.size x);
+    atime = float_of_time (S.atime_sec x, S.atime_nsec x);
+    mtime = float_of_time (S.mtime_sec x, S.mtime_nsec x);
+    ctime = float_of_time (S.ctime_sec x, S.ctime_nsec x);
+  }
 
 let unlink ~rmdir dir path =
   (* [unlink] is really an operation on [path]'s parent. Get a reference to that first: *)

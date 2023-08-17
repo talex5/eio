@@ -203,7 +203,7 @@ CAMLprim value caml_eio_posix_fstatat(value v_fd, value v_path, value v_flags) {
   caml_stat_free_preserving_errno(path);
   if (ret == -1) uerror("fstatat", v_path);
 
-  v_ret = caml_alloc_small(12, 0);
+  v_ret = caml_alloc(12, 0);
   Store_field(v_ret, 0, caml_copy_int64(statbuf.st_dev));
   Store_field(v_ret, 1, caml_copy_int64(statbuf.st_ino));
   Store_field(v_ret, 2, get_file_type_variant(statbuf));
