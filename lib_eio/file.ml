@@ -19,11 +19,11 @@ module Stat = struct
   let pp_kind ppf = function
     | `Unknown -> Fmt.string ppf "unknown"
     | `Fifo -> Fmt.string ppf "fifo"
-    | `Character_special -> Fmt.string ppf "character-special"
+    | `Character_special -> Fmt.string ppf "character special file"
     | `Directory -> Fmt.string ppf "directory"
-    | `Block_device -> Fmt.string ppf "block-device"
-    | `Regular_file -> Fmt.string ppf "regular-file"
-    | `Symbolic_link -> Fmt.string ppf "symbolic-link"
+    | `Block_device -> Fmt.string ppf "block device"
+    | `Regular_file -> Fmt.string ppf "regular file"
+    | `Symbolic_link -> Fmt.string ppf "symbolic link"
     | `Socket -> Fmt.string ppf "socket"
 
   type t = {
