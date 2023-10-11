@@ -62,7 +62,12 @@ end
 let with_tmp_dir ~fs prefix suffix fn =
   Switch.run @@ fun sw ->
   let dir = fs / Filename.temp_dir prefix suffix in
-  Switch.on_release sw (fun () -> Path.rmtree dir);
+  Switch.on_release sw (fun () ->
+      let t0 = Unix.gettimeofday () in
+      Path.rmtree dir;
+      let t1 = Unix.gettimeofday () in
+      traceln "Removed tmpdir in %.2f s" (t1 -. t0)
+    );
   fn dir
 
 let bench_stat root =
