@@ -14,7 +14,9 @@ type ty = Read | Write
 module Fd = Eio_unix.Fd
 
 (* todo: keeping a pool of workers is probably faster *)
-let in_worker_thread = Eio_unix.run_in_systhread
+let in_worker_thread fn =
+  let t = Sched.get () in
+  Sched.run_in_thread_pool t fn
 
 let await_readable fd =
   Fd.use_exn "await_readable" fd @@ fun fd ->

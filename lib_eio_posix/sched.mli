@@ -42,3 +42,7 @@ val enter : (t -> 'a Eio_utils.Suspended.t -> exit) -> 'a
 (** [enter fn] suspends the current fiber and runs [fn t k] in the scheduler's context.
 
     [fn] should either resume [k] immediately itself, or call one of the [await_*] functions above. *)
+
+val get : unit -> t
+
+val run_in_thread_pool : t -> (unit -> 'a) -> 'a

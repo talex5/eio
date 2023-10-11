@@ -14,6 +14,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *)
 
+open Eio.Std
+
 module Suspended = Eio_utils.Suspended
 module Zzz = Eio_utils.Zzz
 module Lf_queue = Eio_utils.Lf_queue
@@ -36,6 +38,11 @@ type runnable =
 type fd_event_waiters = {
   read : unit Suspended.t Lwt_dllist.t;
   write : unit Suspended.t Lwt_dllist.t;
+}
+
+type worker = {
+  mutable job : unit -> unit;
+  sem : Semaphore.Binary.t;
 }
 
 type t = {
@@ -61,6 +68,8 @@ type t = {
   need_wakeup : bool Atomic.t;
 
   sleep_q: Zzz.t;                       (* Fibers waiting for timers. *)
+
+  thread_pool : worker Queue.t;         (* Idle workers *)
 }
 
 (* The message to send to [eventfd] (any character would do). *)
@@ -228,6 +237,33 @@ let rec next t : [`Exit_scheduler] =
         )
       )
 
+let run_in_thread_pool t fn =
+  let worker =
+    match Queue.take_opt t.thread_pool with
+    | Some worker -> worker
+    | None ->
+      let worker = { job = ignore; sem = Semaphore.Binary.make false } in
+      let _t : Thread.t = Thread.create (fun () ->
+          while true do
+            Semaphore.Binary.acquire worker.sem;
+            worker.job ()
+          done
+        ) () in
+      worker
+  in
+  let p, r = Promise.create () in
+  worker.job <- (fun () ->
+      match fn () with
+      | x -> Promise.resolve_ok r x
+      | exception ex -> Promise.resolve_error r ex
+    );
+  Semaphore.Binary.release worker.sem;
+  let result = Eio.Cancel.protect (fun () -> Promise.await p) in
+  Queue.add worker t.thread_pool;
+  match result with
+  | Ok x -> x
+  | Error ex -> raise ex
+
 let with_sched fn =
   let run_q = Lf_queue.create () in
   Lf_queue.push run_q IO;
@@ -244,7 +280,9 @@ let with_sched fn =
   let poll = Poll.create () in
   let fd_map = Hashtbl.create 10 in
   let t = { run_q; poll; poll_maxi = (-1); fd_map; eventfd; eventfd_r;
-            active_ops = 0; need_wakeup = Atomic.make false; sleep_q } in
+            active_ops = 0; need_wakeup = Atomic.make false; sleep_q;
+            thread_pool = Queue.create ();
+          } in
   let eventfd_ri = Iomux.Util.fd_of_unix eventfd_r in
   Poll.set_index t.poll eventfd_ri eventfd_r Poll.Flags.pollin;
   if eventfd_ri > t.poll_maxi then
@@ -374,3 +412,6 @@ let run ~extra_effects t main x =
   match !result with
   | Some x -> x
   | None -> failwith "BUG in scheduler: deadlock detected"
+
+let get () =
+  enter (fun t k -> Eio_utils.Suspended.continue k t)
