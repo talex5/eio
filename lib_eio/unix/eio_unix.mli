@@ -97,6 +97,6 @@ module Private : sig
   module Fork_action = Fork_action
 end
 
-module Ctf = Ctf_unix
+module Tracing = Ctf_unix
 
 module Pi = Pi
