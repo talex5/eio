@@ -1,7 +1,6 @@
 # Setting up the environment
 
 ```ocaml
-# #require "eio_main";;
 # #require "eio.mock";;
 ```
 
@@ -42,7 +41,7 @@ let run fn =
     let actual = t1 -. t0 in
     if Float.(actual = expected)
     then (traceln "Duration (valid): %.0f" expected; res)
-    else failwith (Format.sprintf "Duration was not %.0f: %.0f" expected actual)
+    else Fmt.failwith "Duration was not %.0f: %.0f" expected actual
   in
   fn mgr sleep duration
 ```
@@ -187,7 +186,7 @@ Exception: Failure "3".
 
 # Blocking for capacity
 
-`Executor_pool.submit` will block waiting for room in the queue:
+`Executor_pool.submit_exn` will block waiting for room in the queue:
 
 ```ocaml
 # run @@ fun mgr sleep duration ->
@@ -276,5 +275,5 @@ Exception: Failure "3".
     Executor_pool.submit_exn ep (fun () -> sleep 50.; incr count);
     traceln "Count: %d" !count
 +[0] Duration (valid): 0
-Exception: Failure "Executor_pool: Switch cancelled".
+Exception: Failure "Executor_pool: Switch finished".
 ```
