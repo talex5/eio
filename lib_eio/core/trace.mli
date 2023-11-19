@@ -18,11 +18,20 @@ val log : string -> unit
 val create : ?label:string -> id -> Eio_runtime_events.ty -> unit
 (** [create id ty] records the creation of [id]. *)
 
-val read : id -> unit
-(** [read src] records that promise [src]'s value was read. *)
+val fiber_create : cc:id -> id -> unit
+(** [fiber_create ~cc id] records the creation of fiber [id] in context [cc]. *)
 
-val try_read : id -> unit
-(** [try_read src] records that the current fiber wants to read from [src] (which is not currently ready). *)
+val create_cc : id -> Eio_runtime_events.cc_ty -> unit
+(** [create_cc id ty] records the creation of cancellation context [id]. *)
+
+val get : id -> unit
+(** [get src] records reading a promise, taking from a stream, taking a lock, etc. *)
+
+val try_get : id -> unit
+(** [try_get src] records that the current fiber wants to get from [src] (which is not currently ready). *)
+
+val put : id -> unit
+(** [put dst] records resolving a promise, adding to a stream, releasing a lock, etc. *)
 
 val fiber : id -> unit
 (** [fiber id] records that [id] is now the current fiber for this domain. *)
@@ -30,11 +39,11 @@ val fiber : id -> unit
 val suspend : Runtime_events.Type.span -> unit
 (** [suspend] records when the event loop is stopped waiting for events from the OS. *)
 
-val resolve : id -> unit
-(** [resolve id] records that [id] is now resolved. *)
+val exit_cc : unit -> unit
+(** [exit_cc ()] records that the current CC has finished. *)
 
-val resolve_error : id -> exn -> unit
-(** [resolve_error id exn] records that [id] is now failed. *)
+val exit_fiber : id -> unit
+(** [exit_fiber id] records that fiber [id] has finished. *)
 
-val signal : id -> unit
-(** [signal x] records that [x] was signalled. *)
+val error : id -> exn -> unit
+(** [error id exn] records that [id] received an error. *)

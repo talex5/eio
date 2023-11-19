@@ -12,7 +12,7 @@ let make n =
   }
 
 let release t =
-  Trace.signal t.id;
+  Trace.put t.id;
   Sem_state.release t.state
 
 let acquire t =
@@ -24,7 +24,7 @@ let acquire t =
         match Sem_state.suspend t.state (fun () -> enqueue (Ok ())) with
         | None -> ()   (* Already resumed *)
         | Some request ->
-          Trace.try_read t.id;
+          Trace.try_get t.id;
           match Fiber_context.get_error ctx with
           | Some ex ->
             if Sem_state.cancel request then enqueue (Error ex);
@@ -36,7 +36,7 @@ let acquire t =
               )
       )
   );
-  Trace.read t.id
+  Trace.get t.id
 
 let get_value t =
   max 0 (Atomic.get t.state.state)

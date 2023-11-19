@@ -29,11 +29,18 @@ let create ?label id ty =
   add_event RE.create (id, ty);
   Option.iter (fun l -> add_event RE.name (id, l)) label
 
+let create_cc id ty =
+  add_event RE.create_cc (id, ty)
+
+let fiber_create ~cc id =
+  add_event RE.fiber_create (id, cc)
+
 let log = add_event RE.log
 let fiber = add_event RE.fiber
 let suspend = add_event RE.suspend
-let try_read = add_event RE.try_read
-let read = add_event RE.read
-let signal = add_event RE.signal
-let resolve = add_event RE.resolve
-let resolve_error id ex = add_event RE.resolve_error (id, ex)
+let try_get = add_event RE.try_get
+let get = add_event RE.get
+let put = add_event RE.put
+let exit_fiber = add_event RE.exit_fiber
+let exit_cc = add_event RE.exit_cc
+let error id ex = add_event RE.error (id, ex)

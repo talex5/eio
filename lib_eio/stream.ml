@@ -70,7 +70,7 @@ module Locking = struct
     | None ->
       (* There aren't any items, so we need to wait for one. *)
       let x = Waiters.await ~mutex:(Some t.mutex) t.readers in
-      Trace.read t.id;
+      Trace.get t.id;
       x
     | Some v ->
       (* If anyone was waiting for space, let the next one go.

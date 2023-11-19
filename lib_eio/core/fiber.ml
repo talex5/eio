@@ -17,12 +17,11 @@ let fork ~sw f =
     let new_fiber = Cancel.Fiber_context.make ~cc:sw.cancel ~vars in
     fork_raw new_fiber @@ fun () ->
     Switch.with_op sw @@ fun () ->
-    match f () with
-    | () ->
-      Trace.resolve (Cancel.Fiber_context.tid new_fiber)
-    | exception ex ->
-      Switch.fail sw ex;  (* The [with_op] ensures this will succeed *)
-      Trace.resolve_error (Cancel.Fiber_context.tid new_fiber) ex
+    try
+      f ()
+    with ex ->
+      let bt = Printexc.get_raw_backtrace () in
+      Switch.fail ~bt sw ex;  (* The [with_op] ensures this will succeed *)
   ) (* else the fiber should report the error to [sw], but [sw] is failed anyway *)
 
 let fork_daemon ~sw f =
@@ -35,13 +34,12 @@ let fork_daemon ~sw f =
     match f () with
     | `Stop_daemon ->
       (* The daemon asked to stop. *)
-      Trace.resolve (Cancel.Fiber_context.tid new_fiber)
+      ()
     | exception Cancel.Cancelled Exit when not (Cancel.is_on sw.cancel) ->
       (* The daemon was cancelled because all non-daemon fibers are finished. *)
-      Trace.resolve (Cancel.Fiber_context.tid new_fiber)
+      ()
     | exception ex ->
       Switch.fail sw ex;  (* The [with_daemon] ensures this will succeed *)
-      Trace.resolve_error (Cancel.Fiber_context.tid new_fiber) ex
   ) (* else the fiber should report the error to [sw], but [sw] is failed anyway *)
 
 let fork_promise ~sw f =
@@ -92,7 +90,7 @@ let await_cancel () =
 let any fs =
   let r = ref `None in
   let parent_c =
-    Cancel.sub_unchecked (fun cc ->
+    Cancel.sub_unchecked Any (fun cc ->
         let wrap h =
           match h () with
           | x ->
@@ -198,7 +196,7 @@ module List = struct
       }
 
     let await_free t =
-      if t.free_fibers = 0 then Single_waiter.await t.cond t.sw.id;
+      if t.free_fibers = 0 then Single_waiter.await t.cond t.sw.cancel.id;
       (* If we got woken up then there was a free fiber then. And since we're the
          only fiber that uses [t], and we were sleeping, it must still be free. *)
       assert (t.free_fibers > 0);

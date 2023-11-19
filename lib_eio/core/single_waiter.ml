@@ -23,5 +23,5 @@ let await t id =
         enqueue x
       )
   in
-  Trace.read id;
+  Trace.get id;
   x
