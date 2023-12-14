@@ -10,7 +10,7 @@ let prepare_for_await () =
       Suspend.enter @@ fun ctx enqueue ->
       let awaiting = `Awaiting enqueue in
       if Atomic.compare_and_set state `Init awaiting then (
-        Cancel.Fiber_context.set_cancel_fn ctx (fun ex ->
+        Cancel.Fiber_context.set_cancel_fn ctx "dla" (fun ex ->
             if Atomic.compare_and_set state awaiting `Released then (
               enqueue (Error ex)
             )

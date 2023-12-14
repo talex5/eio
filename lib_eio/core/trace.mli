@@ -12,6 +12,9 @@ val mint_id : unit -> id
 val log : string -> unit
 (** [log msg] attaches text [msg] to the current fiber. *)
 
+val suspend_fiber : string -> unit
+(** [suspend_fiber op] records that the current fiber is now suspended waiting for [op]. *)
+
 (** {2 Recording system events}
     These are normally only called by the scheduler. *)
 

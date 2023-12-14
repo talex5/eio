@@ -417,7 +417,7 @@ module Domain_mgr = struct
     let domain = ref None in
     Sched.enter (fun sched k ->
         let cancelled, set_cancelled = Promise.create () in
-        Fiber_context.set_cancel_fn k.fiber (Promise.resolve set_cancelled);
+        Fiber_context.set_cancel_fn k.fiber "run-domain" (Promise.resolve set_cancelled);
         domain := Some (Domain.spawn (fun () ->
             Fun.protect
               (fun () ->

@@ -52,7 +52,7 @@ let await_internal ~mutex (t:'a t) ctx enqueue =
         enqueue (Error ex)
       )
     in
-    Fiber_context.set_cancel_fn ctx cancel;
+    Fiber_context.set_cancel_fn ctx "await_internal" cancel;
     let waiter = { enqueue; finished } in
     match mutex with
     | None ->

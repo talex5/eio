@@ -634,8 +634,10 @@ module Private : sig
     val cancellation_context : t -> Cancel.t
     (** [cancellation_context t] is [t]'s current cancellation context. *)
 
-    val set_cancel_fn : t -> (exn -> unit) -> unit
-    (** [set_cancel_fn t fn] sets [fn] as the fiber's cancel function.
+    val set_cancel_fn : t -> string -> (exn -> unit) -> unit
+    (** [set_cancel_fn t op fn] sets [fn] as the fiber's cancel function.
+
+        [op] is used for tracing to indicate why the fiber is suspended.
 
         If [t]'s cancellation context is cancelled, the function is called.
         It should attempt to make the current operation finish quickly, either with

@@ -143,7 +143,7 @@ let use t f =
                 if cancel segment cell then enqueue (Error ex);
                 (* else being resumed *)
               | None ->
-                Fiber_context.set_cancel_fn ctx (fun ex ->
+                Fiber_context.set_cancel_fn ctx "await-free-pool-item" (fun ex ->
                     if cancel segment cell then enqueue (Error ex)
                     (* else being resumed *)
                   )

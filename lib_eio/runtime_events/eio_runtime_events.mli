@@ -32,6 +32,7 @@ val create_cc : (id * cc_ty) Runtime_events.User.t
 val create : (id * ty) Runtime_events.User.t
 val log : string Runtime_events.User.t
 val name : (id * string) Runtime_events.User.t
+val suspend_fiber : string Runtime_events.User.t
 val exit_cc : unit Runtime_events.User.t
 val exit_fiber : id Runtime_events.User.t
 val error : (id * exn) Runtime_events.User.t
@@ -59,6 +60,7 @@ type event = [
   | `Exit_cc                    (** The current CC ends *)
   | `Exit_fiber of id           (** The running fiber ends *)
   | `Suspend of Runtime_events.Type.span        (** The domain asks the OS to wait for events *)
+  | `Suspend_fiber of string    (** The running fiber is suspended (until resumed by [`Fiber]) *)
 ]
 
 val pp_event : Format.formatter -> event -> unit

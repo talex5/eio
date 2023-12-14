@@ -101,7 +101,7 @@ module Impl = struct
     let domain = ref None in
     Eio.Private.Suspend.enter (fun ctx enqueue ->
         let cancelled, set_cancelled = Promise.create () in
-        Eio.Private.Fiber_context.set_cancel_fn ctx (Promise.resolve set_cancelled);
+        Eio.Private.Fiber_context.set_cancel_fn ctx "run-domain" (Promise.resolve set_cancelled);
         domain := Some (Domain.spawn (fun () ->
             Fun.protect (run_event_loop (wrap_backtrace (fun () -> fn ~cancelled)))
               ~finally:(fun () -> enqueue (Ok ()))))

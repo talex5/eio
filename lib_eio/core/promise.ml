@@ -54,7 +54,7 @@ let await t =
             (* We observed the promise to be still unresolved after registering a waiter.
                Therefore any resolution must happen after we were registered and we will be notified. *)
             Trace.try_get t.id;
-            Cancel.Fiber_context.set_cancel_fn ctx (fun ex ->
+            Cancel.Fiber_context.set_cancel_fn ctx "Promise.await" (fun ex ->
                 if Broadcast.cancel request then enqueue (Error ex)
                 (* else already resumed *)
               )

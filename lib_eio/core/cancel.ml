@@ -196,7 +196,8 @@ module Fiber_context = struct
 
   let get_error t = get_error t.cancel_context
 
-  let set_cancel_fn t fn =
+  let set_cancel_fn t op fn =
+    Trace.suspend_fiber op;
     t.cancel_fn <- fn
 
   let clear_cancel_fn t =

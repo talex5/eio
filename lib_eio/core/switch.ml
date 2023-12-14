@@ -91,7 +91,7 @@ let rec await_idle t =
   (* Wait for fibers to finish: *)
   while t.fibers > 0 do
     Trace.try_get t.cancel.id;
-    Single_waiter.await t.waiter t.cancel.id
+    Single_waiter.await t.waiter "await_idle" t.cancel.id
   done;
   (* Call on_release handlers: *)
   let queue = Lwt_dllist.create () in

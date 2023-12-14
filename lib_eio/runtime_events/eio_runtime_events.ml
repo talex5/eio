@@ -183,6 +183,9 @@ let name = Runtime_events.User.register "eio.name" Name id_string_type
 type Runtime_events.User.tag += Log
 let log = Runtime_events.User.register "eio.log" Log string
 
+type Runtime_events.User.tag += Suspend_fiber
+let suspend_fiber = Runtime_events.User.register "eio.fiber.suspend" Suspend_fiber string
+
 type Runtime_events.User.tag += Fiber
 let fiber = Runtime_events.User.register "eio.fiber" Fiber Runtime_events.Type.int
 
@@ -205,6 +208,7 @@ type event = [
   | `Exit_cc
   | `Exit_fiber of id
   | `Suspend of Runtime_events.Type.span
+  | `Suspend_fiber of string
 ]
 
 let pf = Format.fprintf
@@ -225,6 +229,7 @@ let pp_event f (e : event) =
   | `Exit_fiber id -> pf f "fiber %d finishes" id
   | `Suspend Begin -> pf f "domain suspend"
   | `Suspend End -> pf f "domain resume"
+  | `Suspend_fiber op -> pf f "fiber suspended: %s" op
 
 type 'a handler = int -> Runtime_events.Timestamp.t -> 'a -> unit
 
@@ -271,6 +276,7 @@ let add_callbacks (fn : event handler) x =
   let string_event ring_id ts ev v =
     match Runtime_events.User.tag ev with
     | Log -> fn ring_id ts (`Log v)
+    | Suspend_fiber -> fn ring_id ts (`Suspend_fiber v)
     | _ -> ()
   in
   let unit_event ring_id ts ev () =

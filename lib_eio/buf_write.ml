@@ -457,7 +457,7 @@ let rec await_batch t =
   | (Active | Closed), true -> Buffers.to_list t.scheduled
   | Paused, _ | Active, false ->
     Suspend.enter (fun ctx enqueue ->
-        Fiber_context.set_cancel_fn ctx (fun ex ->
+        Fiber_context.set_cancel_fn ctx "await-batch" (fun ex ->
             t.wake_writer <- ignore;
             enqueue (Error ex)
           );

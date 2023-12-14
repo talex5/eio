@@ -263,7 +263,7 @@ let await_readable t (k : unit Suspended.t) fd =
     let was_empty = Lwt_dllist.is_empty waiters.read in
     let node = Lwt_dllist.add_l k waiters.read in
     if was_empty then update t waiters fd;
-    Fiber_context.set_cancel_fn k.fiber (fun ex ->
+    Fiber_context.set_cancel_fn k.fiber "await_readable" (fun ex ->
         Lwt_dllist.remove node;
         if Lwt_dllist.is_empty waiters.read then
           update t waiters fd;
@@ -281,7 +281,7 @@ let await_writable t (k : unit Suspended.t) fd =
     let was_empty = Lwt_dllist.is_empty waiters.write in
     let node = Lwt_dllist.add_l k waiters.write in
     if was_empty then update t waiters fd;
-    Fiber_context.set_cancel_fn k.fiber (fun ex ->
+    Fiber_context.set_cancel_fn k.fiber "await_writable" (fun ex ->
         Lwt_dllist.remove node;
         if Lwt_dllist.is_empty waiters.write then
           update t waiters fd;
@@ -299,7 +299,7 @@ let await_timeout t (k : unit Suspended.t) time =
   | Some e -> Suspended.discontinue k e
   | None ->
     let node = Zzz.add t.sleep_q time k in
-    Fiber_context.set_cancel_fn k.fiber (fun ex ->
+    Fiber_context.set_cancel_fn k.fiber "await-timeout" (fun ex ->
         Zzz.remove t.sleep_q node;
         enqueue_failed_thread t k ex
       );

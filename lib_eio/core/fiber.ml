@@ -85,7 +85,7 @@ exception Not_first
 
 let await_cancel () =
   Suspend.enter @@ fun fiber enqueue ->
-  Cancel.Fiber_context.set_cancel_fn fiber (fun ex -> enqueue (Error ex))
+  Cancel.Fiber_context.set_cancel_fn fiber "await_cancel" (fun ex -> enqueue (Error ex))
 
 let any fs =
   let r = ref `None in
@@ -196,7 +196,7 @@ module List = struct
       }
 
     let await_free t =
-      if t.free_fibers = 0 then Single_waiter.await t.cond t.sw.cancel.id;
+      if t.free_fibers = 0 then Single_waiter.await t.cond "await_free" t.sw.cancel.id;
       (* If we got woken up then there was a free fiber then. And since we're the
          only fiber that uses [t], and we were sleeping, it must still be free. *)
       assert (t.free_fibers > 0);
@@ -307,7 +307,7 @@ let run_coroutine ~state fn =
     Suspend.enter (fun ctx enqueue ->
         let ready = `Ready enqueue in
         if Atomic.compare_and_set state prev ready then (
-          Cancel.Fiber_context.set_cancel_fn ctx (fun ex ->
+          Cancel.Fiber_context.set_cancel_fn ctx "await-consumer" (fun ex ->
               if Atomic.compare_and_set state ready (`Failed ex) then
                 enqueue (Error ex);
               (* else the client enqueued a resume for us; handle that instead *)
@@ -360,7 +360,7 @@ let fork_coroutine ~sw fn =
             let running = `Running enqueue in
             if Atomic.compare_and_set state prev running then (
               resume (Ok running);
-              Cancel.Fiber_context.set_cancel_fn ctx (fun ex ->
+              Cancel.Fiber_context.set_cancel_fn ctx "await-producer" (fun ex ->
                   if Atomic.compare_and_set state running (`Client_cancelled ex) then
                     enqueue (Error ex)
                 )

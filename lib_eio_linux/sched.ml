@@ -117,7 +117,7 @@ let rec enqueue_job t fn =
 
 (* Cancellations always come from the same domain, so no need to send wake events here. *)
 let rec enqueue_cancel job t =
-  Trace.log "cancel";
+  Trace.suspend_fiber "cancel";
   match enqueue_job t (fun () -> Uring.cancel t.uring job Cancel_job) with
   | None -> Queue.push (fun t -> enqueue_cancel job t) t.io_q
   | Some _ -> ()
@@ -146,14 +146,14 @@ let cancel job = Effect.perform (Cancel job)
    then sets the fiber's cancel function to cancel it.
    If [action] is already cancelled, it schedules [action] to be discontinued.
    @return Whether to retry the operation later, once there is space. *)
-let with_cancel_hook ~action t fn =
+let with_cancel_hook op ~action t fn =
   match Fiber_context.get_error action.Suspended.fiber with
   | Some ex -> enqueue_failed_thread t action ex; false
   | None ->
     match enqueue_job t fn with
     | None -> true
     | Some job ->
-      Fiber_context.set_cancel_fn action.fiber (fun _ -> cancel job);
+      Fiber_context.set_cancel_fn action.fiber op (fun _ -> cancel job);
       false
 
 let submit_pending_io st =
@@ -168,7 +168,7 @@ let rec submit_rw_req st ({op; file_offset; fd; buf; len; cur_off; action} as re
   let off = Uring.Region.to_offset buf + cur_off in
   let len = match len with Exactly l | Upto l -> l in
   let len = len - cur_off in
-  let retry = with_cancel_hook ~action st (fun () ->
+  let retry = with_cancel_hook "rw" ~action st (fun () ->
       let file_offset =
         match file_offset with
         | `Pos x -> Optint.Int63.add x (Optint.Int63.of_int cur_off)
@@ -336,8 +336,7 @@ let free_buf st buf =
   | Some k -> enqueue_thread st k buf
 
 let rec enqueue_poll_add fd poll_mask st action =
-  Trace.log "poll_add";
-  let retry = with_cancel_hook ~action st (fun () ->
+  let retry = with_cancel_hook "poll_add" ~action st (fun () ->
       Uring.poll_add st.uring fd poll_mask (Job action)
     )
   in
@@ -345,8 +344,7 @@ let rec enqueue_poll_add fd poll_mask st action =
     Queue.push (fun st -> enqueue_poll_add fd poll_mask st action) st.io_q
 
 let rec enqueue_poll_add_unix fd poll_mask st action cb =
-  Trace.log "poll_add";
-  let retry = with_cancel_hook ~action st (fun () ->
+  let retry = with_cancel_hook "poll_add" ~action st (fun () ->
       Uring.poll_add st.uring fd poll_mask (Job_fn (action, cb))
     )
   in
@@ -355,8 +353,7 @@ let rec enqueue_poll_add_unix fd poll_mask st action cb =
 
 let rec enqueue_readv args st action =
   let (file_offset,fd,bufs) = args in
-  Trace.log "readv";
-  let retry = with_cancel_hook ~action st (fun () ->
+  let retry = with_cancel_hook "readv" ~action st (fun () ->
       Uring.readv st.uring ~file_offset fd bufs (Job action))
   in
   if retry then (* wait until an sqe is available *)

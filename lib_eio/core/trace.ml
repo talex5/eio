@@ -44,3 +44,4 @@ let put = add_event RE.put
 let exit_fiber = add_event RE.exit_fiber
 let exit_cc = add_event RE.exit_cc
 let error id ex = add_event RE.error (id, ex)
+let suspend_fiber op = add_event RE.suspend_fiber op

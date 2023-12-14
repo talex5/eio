@@ -23,7 +23,7 @@ let await_generic ?mutex t =
             Option.iter Eio_mutex.unlock mutex
           | Some request ->
             Option.iter Eio_mutex.unlock mutex;
-            Fiber_context.set_cancel_fn ctx (fun ex ->
+            Fiber_context.set_cancel_fn ctx "await-cond" (fun ex ->
                 if Broadcast.cancel request then enqueue (Error ex)
                 (* else already succeeded *)
               )
@@ -103,7 +103,7 @@ let rec loop_no_mutex t fn =
                When it runs, it will resume us.
                We're also not currently cancelled, because we checked above
                and cancellations only come from the same thread. *)
-            Fiber_context.set_cancel_fn ctx (fun ex ->
+            Fiber_context.set_cancel_fn ctx "loop-cond" (fun ex ->
                 if cancel request then (
                   (* We could set the state to Done here, but there's no need;
                      we're not racing with anything now. [wake] never runs. *)

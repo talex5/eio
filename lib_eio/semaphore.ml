@@ -30,7 +30,7 @@ let acquire t =
             if Sem_state.cancel request then enqueue (Error ex);
             (* else already resumed *)
           | None ->
-            Fiber_context.set_cancel_fn ctx (fun ex ->
+            Fiber_context.set_cancel_fn ctx "acquire-semaphore" (fun ex ->
                 if Sem_state.cancel request then enqueue (Error ex)
                 (* else already resumed *)
               )

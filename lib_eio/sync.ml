@@ -430,7 +430,7 @@ let put_suspend t v loc =
     if cancel_put item ex then enqueue (Error ex);
     (* else being resumed *)
   | None ->
-    Fiber_context.set_cancel_fn ctx (fun ex ->
+    Fiber_context.set_cancel_fn ctx "await-consumer" (fun ex ->
         if cancel_put item ex then enqueue (Error ex)
         (* else being resumed *)
       )
@@ -466,7 +466,7 @@ let take_suspend t loc =
       if cancel t loc then enqueue (Error ex);
       (* else being resumed *)
     | None ->
-      Fiber_context.set_cancel_fn ctx (fun ex ->
+      Fiber_context.set_cancel_fn ctx "await-producer" (fun ex ->
           if cancel t loc then enqueue (Error ex)
           (* else being resumed *)
         )
