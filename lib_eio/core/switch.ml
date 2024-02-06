@@ -1,25 +1,90 @@
+module Lf_stack = struct
+  type item = {
+    owner : t;
+    fn : (unit -> unit) Atomic.t;
+  }
+
+  and state =
+    | Active of { head : item list; items : int }
+    | Closed
+  
+  and t = {
+    state : state Atomic.t;
+    cancelled : int Atomic.t;
+  }
+
+  let close t =
+    match Atomic.exchange t.state Closed with
+    | Closed -> []
+    | Active x -> x.head
+
+  let rec push t fn =
+    match Atomic.get t.state with
+    | Closed -> None
+    | Active state as prev ->
+      let item = { owner = t; fn = Atomic.make fn } in
+      let next = Active { head = item :: state.head; items = state.items + 1 } in
+      if Atomic.compare_and_set t.state prev next then Some item
+      else push t fn
+
+  let cancelled () = failwith "Cancelled hook called!"
+
+  let incr_cancelled t =
+    match Atomic.get t.state with
+    | Closed -> ()
+    | Active state as prev ->
+      let n_cancelled = Atomic.fetch_and_add t.cancelled 1 in
+      if 2 * n_cancelled > state.items then (
+        let rec aux () =
+          let items = ref 0 in
+          let cleaned = ref 0 in
+          let head =
+            state.head |> List.filter (fun item ->
+                if Atomic.get item.fn == cancelled then (incr cleaned; false)
+                else (incr items; true)
+              )
+          in
+          let next = Active { head; items = !items } in
+          if Atomic.compare_and_set t.state prev next then (
+            ignore (Atomic.fetch_and_add t.cancelled (- !cleaned) : int);
+          ) else aux ()
+        in
+        aux ()
+      )
+
+  let cancel item =
+    let fn = Atomic.exchange item.fn cancelled in
+    if fn == cancelled then ignore
+    else (
+      incr_cancelled item.owner;
+      fn
+    )
+
+  let create () = {
+    state = Atomic.make (Active { head = []; items = 0 });
+    cancelled = Atomic.make 0;
+  }
+
+  let closed = {
+    state = Atomic.make Closed;
+    cancelled = Atomic.make 0;
+  }
+end
+
 type t = {
   mutable fibers : int;         (* Total, including daemon_fibers and the main function *)
   mutable daemon_fibers : int;
   mutable exs : (exn * Printexc.raw_backtrace) option;
-  on_release : (unit -> unit) Lwt_dllist.t;
+  on_release : Lf_stack.t;
   waiter : unit Single_waiter.t;              (* The main [top]/[sub] function may wait here for fibers to finish. *)
   cancel : Cancel.t;
 }
 
-type hook =
-  | Null
-  | Hook : Domain.id * 'a Lwt_dllist.node -> hook
+type hook = Lf_stack.item
+let null_hook : hook = { owner = Lf_stack.closed; fn = Atomic.make Lf_stack.cancelled }
 
-let null_hook = Null
-
-(* todo: would be good to make this thread-safe. While a switch can only be turned off from its own domain,
-   we might want to allow closing something explicitly from any domain, and that needs to remove the hook. *)
-let remove_hook = function
-  | Null -> ()
-  | Hook (id, n) ->
-    if Domain.self () <> id then invalid_arg "Switch hook removed from wrong domain!";
-    Lwt_dllist.remove n
+let remove_hook item =
+  ignore (Lf_stack.cancel item : unit -> unit)
 
 let dump f t =
   Fmt.pf f "@[<v2>Switch %d (%d extra fibers):@,%a@]"
@@ -92,20 +157,9 @@ let rec await_idle t =
     Single_waiter.await_protect t.waiter "Switch.await_idle" t.cancel.id
   done;
   (* Call on_release handlers: *)
-  let queue = Lwt_dllist.create () in
-  Lwt_dllist.transfer_l t.on_release queue;
-  let rec release () =
-    match Lwt_dllist.take_opt_r queue with
-    | None when t.fibers = 0 && Lwt_dllist.is_empty t.on_release -> ()
-    | None -> await_idle t
-    | Some fn ->
-      begin
-        try Cancel.protect fn with
-        | ex -> fail t ex
-      end;
-      release ()
-  in
-  release ()
+  let queue = Lf_stack.close t.on_release in
+  List.iter (fun item -> try Cancel.protect (Lf_stack.cancel item) with ex -> fail t ex ) queue;
+  if t.fibers > 0 then await_idle t
 
 let maybe_raise_exs t =
   match t.exs with
@@ -118,7 +172,7 @@ let create cancel =
     daemon_fibers = 0;
     exs = None;
     waiter = Single_waiter.create ();
-    on_release = Lwt_dllist.create ();
+    on_release = Lf_stack.create ();
     cancel;
   }
 
@@ -170,11 +224,11 @@ let () =
       | _ -> None
     )
 
-let on_release_full t fn =
+let on_release_cancellable t fn =
   if Domain.self () = t.cancel.domain then (
-    match t.cancel.state with
-    | On | Cancelling _ -> Lwt_dllist.add_r fn t.on_release
-    | Finished ->
+    match Lf_stack.push t.on_release fn with
+    | Some node -> node
+    | None ->
       match Cancel.protect fn with
       | () -> invalid_arg "Switch finished!"
       | exception ex ->
@@ -189,7 +243,4 @@ let on_release_full t fn =
   )
 
 let on_release t fn =
-  ignore (on_release_full t fn : _ Lwt_dllist.node)
-
-let on_release_cancellable t fn =
-  Hook (t.cancel.domain, on_release_full t fn)
+  ignore (on_release_cancellable t fn : Lf_stack.item)

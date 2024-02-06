@@ -159,15 +159,16 @@ Can't release a release handler across domains:
     (fun () ->
        Eio.Domain_manager.run mgr @@ fun () ->
        Switch.run @@ fun sw ->
-       let hook = Switch.on_release_cancellable sw ignore in
+       let hook = Switch.on_release_cancellable sw (fun () -> traceln "Released!!") in
        Promise.resolve r hook;
        Fiber.await_cancel ()
     )
     (fun () ->
        let hook = Promise.await p in
-       Switch.remove_hook hook
+       Switch.remove_hook hook;
+       raise Exit
     );;
-Exception: Invalid_argument "Switch hook removed from wrong domain!".
+Exception: Stdlib.Exit.
 ```
 
 Can't fork into another domain:
