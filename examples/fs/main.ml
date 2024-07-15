@@ -17,6 +17,7 @@ let scan_mli t f =
 
 (* Walk the tree rooted at [t] and scan any .mli files found. *)
 let rec scan t f =
+  Eio.traceln "Scan %a" Eio.Path.pp t;
   match Eio.Path.kind ~follow:false t with
   | `Directory ->
     Eio.Path.read_dir t |> List.iter (function
@@ -29,4 +30,4 @@ let rec scan t f =
 
 let () =
   Eio_main.run @@ fun env ->
-  scan (Eio.Stdenv.cwd env) Format.std_formatter
+  scan (Eio.Stdenv.fs env / "C:") Format.std_formatter
