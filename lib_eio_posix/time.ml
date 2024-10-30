@@ -9,7 +9,7 @@ module Mono_clock = struct
 end
 
 let mono_clock : Mtime.t Eio.Time.clock_ty r =
-  let handler = Eio.Time.Pi.clock (module Mono_clock) in
+  let handler = Eio.Time.Pi.clock_mtime (module Mono_clock) in
   Eio.Resource.T ((), handler)
 
 module Clock = struct
@@ -26,5 +26,5 @@ module Clock = struct
 end
 
 let clock : float Eio.Time.clock_ty r =
-  let handler = Eio.Time.Pi.clock (module Clock) in
+  let handler = Eio.Time.Pi.clock_float (module Clock) in
   Eio.Resource.T ((), handler)

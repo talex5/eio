@@ -12,7 +12,7 @@ module Eio_main = struct
   end
 
   let fake_clock =
-    let handler = Eio.Time.Pi.clock (module Fake_clock) in
+    let handler = Eio.Time.Pi.clock_float (module Fake_clock) in
     Eio.Resource.T ((), handler)
 
   let run fn =

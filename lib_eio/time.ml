@@ -14,22 +14,28 @@ module Pi = struct
   end
 
   type (_, _, _) Resource.pi +=
-    | Clock : ('t, (module CLOCK with type t = 't and type time = 'time), [> 'time clock_ty]) Resource.pi
+    | Clock_float : ('t, (module CLOCK with type t = 't and type time = float),
+         [> float clock_ty ]) Resource.pi
+    | Clock_mtime : ('t, (module CLOCK with type t = 't and type time = Mtime.t),
+         [> Mtime.t clock_ty ]) Resource.pi
 
-  let clock (type t time) (module X : CLOCK with type t = t and type time = time) =
-    Resource.handler [ H (Clock, (module X)) ]
+  let clock_float (type t) (module X : CLOCK with type t = t and type time = float) =
+    Resource.handler [ H (Clock_float, (module X)) ]
+
+  let clock_mtime (type t) (module X : CLOCK with type t = t and type time = Mtime.t) =
+    Resource.handler [ H (Clock_mtime, (module X)) ]
 end
 
 type 'a clock = ([> float clock_ty] as 'a) r
 
-let now (type time) (t : [> time clock_ty] r) =
+let now (t : [> float clock_ty] r) =
   let Resource.T (t, ops) = t in
-  let module X = (val (Resource.get ops Pi.Clock)) in
+  let module X = (val (Resource.get ops Pi.Clock_float)) in
   X.now t
 
-let sleep_until (type time) (t : [> time clock_ty] r) time =
+let sleep_until (t : [> float clock_ty] r) time =
   let Resource.T (t, ops) = t in
-  let module X = (val (Resource.get ops Pi.Clock)) in
+  let module X = (val (Resource.get ops Pi.Clock_float)) in
   X.sleep_until t time
 
 let sleep t d = sleep_until t (now t +. d)
@@ -38,8 +44,15 @@ module Mono = struct
   type ty = Mtime.t clock_ty
   type 'a t = ([> ty] as 'a) r
 
-  let now = now
-  let sleep_until = sleep_until
+  let now (t : [> Mtime.t clock_ty] r) =
+    let Resource.T (t, ops) = t in
+    let module X = (val (Resource.get ops Pi.Clock_mtime)) in
+    X.now t
+
+  let sleep_until (t : [> Mtime.t clock_ty] r) time =
+    let Resource.T (t, ops) = t in
+    let module X = (val (Resource.get ops Pi.Clock_mtime)) in
+    X.sleep_until t time
 
   let sleep_span t span =
     match Mtime.add_span (now t) span with

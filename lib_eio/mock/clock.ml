@@ -20,7 +20,7 @@ module type TIME = sig
   val pp : t Fmt.t
 end
 
-module Make(T : TIME) : S with type time := T.t = struct
+module Make(T : TIME) = struct
   type t = T.t ty r
 
   module Key = struct
@@ -90,15 +90,6 @@ module Make(T : TIME) : S with type time := T.t = struct
     let raw (Eio.Resource.T (t, ops)) = Eio.Resource.get ops Raw t
   end
 
-  let handler =
-    Eio.Resource.handler (
-      H (Impl.Raw, Fun.id) ::
-      Eio.Resource.bindings (Eio.Time.Pi.clock (module Impl));
-    )
-
-  let make () =
-    Eio.Resource.T (Impl.make (), handler)
-
   let set_time t v = Impl.set_time (Impl.raw t) v
 
   let try_advance t = Impl.try_advance (Impl.raw t)
@@ -125,6 +116,26 @@ module Mono_time = struct
     Fmt.pf f "%g" s
 end
 
-module Mono = Make(Mono_time)
+module Mono = struct
+  include Make(Mono_time)
+
+  let handler =
+    Eio.Resource.handler (
+      H (Impl.Raw, Fun.id) ::
+      Eio.Resource.bindings (Eio.Time.Pi.clock_mtime (module Impl));
+    )
+
+  let make () =
+    Eio.Resource.T (Impl.make (), handler)
+end
 
 include Make(Old_time)
+
+let handler =
+  Eio.Resource.handler (
+    H (Impl.Raw, Fun.id) ::
+    Eio.Resource.bindings (Eio.Time.Pi.clock_float (module Impl));
+  )
+
+let make () =
+  Eio.Resource.T (Impl.make (), handler)

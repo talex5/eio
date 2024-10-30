@@ -88,10 +88,16 @@ module Pi : sig
   end
 
   type (_, _, _) Resource.pi +=
-      Clock : ('t, (module CLOCK with type t = 't and type time = 'time),
-         [> 'time clock_ty ]) Resource.pi
+    | Clock_float : ('t, (module CLOCK with type t = 't and type time = float),
+         [> float clock_ty ]) Resource.pi
+    | Clock_mtime : ('t, (module CLOCK with type t = 't and type time = Mtime.t),
+         [> Mtime.t clock_ty ]) Resource.pi
 
-  val clock :
-    (module CLOCK with type t = 't and type time = 'time) ->
-    ('t, [> 'time clock_ty]) Resource.handler
+  val clock_float :
+    (module CLOCK with type t = 't and type time = float) ->
+    ('t, [> float clock_ty]) Resource.handler
+
+  val clock_mtime :
+    (module CLOCK with type t = 't and type time = Mtime.t) ->
+    ('t, [> Mtime.t clock_ty]) Resource.handler
 end

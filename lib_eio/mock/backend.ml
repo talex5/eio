@@ -36,7 +36,7 @@ module Wall_clock = struct
 end
 
 let wall_clock =
-  let handler = Eio.Time.Pi.clock (module Wall_clock) in
+  let handler = Eio.Time.Pi.clock_float (module Wall_clock) in
   fun mono_clock -> Eio.Resource.T (mono_clock, handler)
 
 (* Resume the next runnable fiber, if any. *)
