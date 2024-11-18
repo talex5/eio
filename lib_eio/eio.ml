@@ -40,6 +40,7 @@ module Stdenv = struct
   let mono_clock (t : <mono_clock : _ Time.Mono.t; ..>) = t#mono_clock
   let secure_random (t: <secure_random : _ Flow.source; ..>) = t#secure_random
   let fs (t : <fs : _ Path.t; ..>) = t#fs
+  let import_path (t : <fs : _ Path.t; ..>) path = (fst t#fs, path)
   let cwd (t : <cwd : _ Path.t; ..>) = t#cwd
   let debug (t : <debug : 'a; ..>) = t#debug
   let backend_id (t: <backend_id : string; ..>) = t#backend_id

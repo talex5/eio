@@ -228,6 +228,9 @@ module Stdenv : sig
 
       [fs] is useful for handling paths passed in by the user. *)
 
+  val import_path : <fs : 'a Path.t; ..> -> string -> 'a Path.t
+  (** [import_path t path] converts a native path to an (unconfined) Eio path. *)
+
   (** {1 Network}
 
       To use this, see {!Net}.
