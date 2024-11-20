@@ -12,4 +12,5 @@ CAMLprim value eio_unix_fork_setuid(value);
 CAMLprim value eio_unix_fork_setgid(value);
 CAMLprim value eio_unix_cap_enter(value);
 CAMLprim value eio_unix_readlinkat(value, value, value);
+CAMLprim value eio_unix_fchownat(value, value, value, value, value);
 CAMLprim value eio_unix_is_blocking(value);
