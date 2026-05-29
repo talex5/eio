@@ -153,7 +153,7 @@ val rename : dir_fd -> string -> dir_fd -> string -> unit
 val symlink : link_to:string -> dir_fd -> string -> unit
 (** [symlink ~link_to dir path] creates a new symlink at [dir / path] pointing to [link_to]. *)
 
-val chown : follow:bool -> uid:int64 -> gid:int64 -> dir_fd -> string -> unit
+val chown : follow:bool -> ?uid:int64 -> ?gid:int64 -> dir_fd -> string -> unit
 (** [chown ~follow ~uid ~gid dir path] changes the ownership of [dir / path] to [uid, gid].
 
     If [follow = true] and [dir / path] is a symlink, then the ownership of the {e target} is

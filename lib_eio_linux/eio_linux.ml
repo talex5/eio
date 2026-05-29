@@ -412,8 +412,8 @@ end = struct
 
   let read_link t path = Low_level.read_link t.fd path
 
-  let chown ~follow ~uid ~gid t path = 
-    Low_level.chown ~follow ~uid ~gid t.fd path
+  let chown ~follow ?uid ?gid t path = 
+    Low_level.chown ~follow ?uid ?gid t.fd path
 
   let close t =
     match t.fd with

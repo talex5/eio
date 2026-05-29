@@ -431,7 +431,7 @@ let read_link dirfd path =
   Resolve.with_parent "read_link" dirfd path @@ fun dirfd path ->
   Eio_unix.Private.read_link_unix dirfd path
 
-let chown ~follow ~uid ~gid dirfd path =
+let chown ~follow ?(uid=(-1L)) ?(gid=(-1L)) dirfd path =
   let flags = if follow then 0 else Config.at_symlink_nofollow in
   in_worker_thread "chown" @@ fun () ->
   Resolve.with_parent "chown" dirfd path @@ fun dirfd path ->

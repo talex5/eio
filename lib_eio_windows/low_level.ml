@@ -146,7 +146,7 @@ let read_link ?dirfd path =
   in_worker_thread @@ fun () ->
   Eio_unix.Private.read_link dirfd path
 
-let chown ?dirfd ~follow:_ ~uid ~gid path =
+let chown ?dirfd ~follow:_ ?(uid=(-1L)) ?(gid=(-1L)) path =
   in_worker_thread @@ fun () ->
   match dirfd with
   | None -> failwith "Chown is unsupported on Windows"

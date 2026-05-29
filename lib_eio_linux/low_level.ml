@@ -524,7 +524,7 @@ let read_link fd path =
     Eio_unix.run_in_systhread ~label:"read_link" (fun () -> Eio_unix.Private.read_link (Some parent) leaf)
   with Unix.Unix_error (code, name, arg) -> raise @@ Err.wrap_fs code name arg
 
-let chown ~follow ~uid ~gid fd path =
+let chown ~follow ?(uid=(-1L)) ?(gid=(-1L)) fd path =
   let module At = Uring.Linkat_flags in
   let follow = if follow then At.(empty_path + symlink_follow) else At.empty_path in
   let flags = (follow :> int) in
