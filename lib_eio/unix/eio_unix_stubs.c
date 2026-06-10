@@ -11,8 +11,6 @@
 #include <caml/bigarray.h>
 #include <caml/alloc.h>
 
-#define BUF_SIZE 4096
-
 static void caml_stat_free_preserving_errno(void *ptr) {
   int saved = errno;
   caml_stat_free(ptr);

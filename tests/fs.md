@@ -48,9 +48,16 @@ let try_rename p1 p2 =
   | () -> traceln "rename %a to %a -> ok" Path.pp p1 Path.pp p2
   | exception ex -> traceln "@[<h>%a@]" Eio.Exn.pp ex
 
+let dir_entry f (k, name) =
+  Fmt.pf f "%S%s" name (match k with `Regular_file -> "" | `Directory -> "(dir)" | _ -> "(special)")
+
 let try_read_dir path =
-  match Path.read_dir path with
-  | names -> traceln "read_dir %a -> %a" Path.pp path Fmt.Dump.(list string) names
+  match Path.read_dir_entries path with
+  | entries ->
+    traceln "read_dir %a -> %a" Path.pp path Fmt.Dump.(list dir_entry) entries;
+    let names = Path.read_dir path in
+    let entry_names = List.map snd entries in
+    if names <> entry_names then traceln "But read_dir returned %a!" Fmt.Dump.(list string) names
   | exception ex -> traceln "@[<h>%a@]" Eio.Exn.pp ex
 
 let try_read_link path =
