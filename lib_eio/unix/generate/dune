@@ -1,0 +1,6 @@
+(executable
+  (name main)
+  (libraries eio)
+  (foreign_stubs
+    (language c)
+    (names generate_stubs)))

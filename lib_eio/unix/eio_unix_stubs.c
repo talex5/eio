@@ -1,4 +1,5 @@
 #include "primitives.h"
+#include "variants.h"
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -57,18 +58,17 @@ CAMLprim value eio_unix_readlinkat(value v_fd, value v_path, value v_cs) {
 
 CAMLprim value eio_unix_file_type_of_dtype (int d_type) {
   #ifdef _WIN32
-  return caml_hash_variant("Unknown");
+  return v_Unknown;
   #else
   switch (d_type) {
-    case DT_REG: return caml_hash_variant("Regular_file");
-    case DT_DIR: return caml_hash_variant("Directory");
-    case DT_CHR: return caml_hash_variant("Character_special");
-    case DT_BLK: return caml_hash_variant("Block_device");
-	case DT_LNK: return caml_hash_variant("Symbolic_link");
-	case DT_FIFO: return caml_hash_variant("Fifo");
-	case DT_SOCK: return caml_hash_variant("Socket");
-	default:
-      return caml_hash_variant("Unknown");
+    case DT_REG: return v_Regular_file;
+    case DT_DIR: return v_Directory;
+    case DT_CHR: return v_Character_special;
+    case DT_BLK: return v_Block_device;
+    case DT_LNK: return v_Symbolic_link;
+    case DT_FIFO: return v_Fifo;
+    case DT_SOCK: return v_Socket;
+    default: return v_Unknown;
   }
   #endif
 }
