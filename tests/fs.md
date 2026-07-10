@@ -953,7 +953,7 @@ Test chmod on a symlink, on platforms that allow it:
     Eio.Path.chmod path ~follow:false ~perm:0o660;
     assert ((Eio.Path.stat ~follow:false path).perm = 0o660)
   with Eio.Io (Eio.Exn.X Eio_unix.Unix_error (EOPNOTSUPP, _, _), _) ->
-    ()  (* Some systems don't support this, e.g. Linux *)
+    traceln "no";  (* Some systems don't support this, e.g. Linux *)
 - : unit = ()
 ```
 
