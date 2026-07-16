@@ -290,6 +290,9 @@ static sockopt find_sockopt(value v_id) {
 #endif
 #ifdef TCP_KEEPIDLE
     case 4: return (sockopt){ IPPROTO_TCP, TCP_KEEPIDLE };
+#elif defined(TCP_KEEPALIVE)
+    /* macOS uses TCP_KEEPALIVE instead of TCP_KEEPIDLE */
+    case 4: return (sockopt){ IPPROTO_TCP, TCP_KEEPALIVE };
 #endif
 #ifdef TCP_KEEPINTVL
     case 5: return (sockopt){ IPPROTO_TCP, TCP_KEEPINTVL };
