@@ -52,6 +52,7 @@ jobs:
           opam install eio eio_windows eio_main --deps-only --with-test
       - run: opam exec -- dune build
       - run: opam exec -- dune runtest
+      - run: opam exec -- dune exec -- ./examples/hello/main.exe
       - run: opam exec -- dune exec -- ./examples/net/main.exe
       - run: opam exec -- dune exec -- ./examples/fs/main.exe
   docker:
