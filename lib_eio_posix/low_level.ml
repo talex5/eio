@@ -355,7 +355,9 @@ module Resolve = struct
      use [with_parent_loop] instead. *)
   let with_parent op fd path fn = (* todo: use o_resolve_beneath if available *)
     match fd with
-    | Fs -> fn None path
+    | Fs ->
+      let path = if path = "" then "." else path in
+      fn None path
     | Cwd -> with_parent_loop path (fun x y -> Ok (fn x y))
     | Fd dirfd ->
       Fd.use_exn op dirfd @@ fun dirfd ->

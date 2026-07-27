@@ -604,6 +604,15 @@ Create a sandbox, write a file with it, then read it from outside:
 - : bool = true
 ```
 
+And `mkdir`:
+
+```ocaml
+# run ~clear:["foo"] @@ fun env ->
+  Path.mkdir env#fs ~perm:0o700;;
+Exception: Eio.Io Fs Already_exists _,
+  creating directory <fs>
+```
+
 We create a directory and chdir into it.
 Using `cwd` we can't access the parent, but using `fs` we can:
 
